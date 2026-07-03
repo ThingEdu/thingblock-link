@@ -95,6 +95,43 @@ fn deserializes_monitor_write_request() {
 }
 
 #[test]
+fn deserializes_install_platform_request() {
+    let raw = r#"{"id":"5","type":"installPlatform","payload":{"platform":"esp32:esp32"}}"#;
+    let req: Request = serde_json::from_str(raw).expect("parse installPlatform");
+    match req.body {
+        RequestBody::InstallPlatform { platform, version } => {
+            assert_eq!(platform, "esp32:esp32");
+            assert_eq!(version, None, "version defaults to latest");
+        }
+        other => panic!("unexpected body: {other:?}"),
+    }
+}
+
+#[test]
+fn deserializes_install_platform_request_with_version() {
+    let raw = r#"{
+        "id":"6","type":"installPlatform",
+        "payload":{"platform":"esp32:esp32","version":"3.0.5"}
+    }"#;
+    let req: Request = serde_json::from_str(raw).expect("parse installPlatform with version");
+    match req.body {
+        RequestBody::InstallPlatform { version, .. } => {
+            assert_eq!(version.as_deref(), Some("3.0.5"));
+        }
+        other => panic!("unexpected body: {other:?}"),
+    }
+}
+
+#[test]
+fn install_platform_request_requires_platform() {
+    let raw = r#"{"id":"7","type":"installPlatform","payload":{}}"#;
+    assert!(
+        serde_json::from_str::<Request>(raw).is_err(),
+        "a payload without `platform` must be rejected"
+    );
+}
+
+#[test]
 fn serializes_monitor_data_envelope() {
     let resp = Response {
         id: "9".into(),

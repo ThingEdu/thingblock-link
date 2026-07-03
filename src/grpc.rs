@@ -16,6 +16,7 @@ use tonic::transport::Channel;
 pub mod board;
 pub mod compile;
 pub mod monitor;
+pub mod platform;
 pub mod upload;
 
 /// The tonic-generated code, mirroring the proto package hierarchy. Lints are

@@ -31,7 +31,7 @@ TARGET_WINDOWS := x86_64-pc-windows-msvc
 .DEFAULT_GOAL := help
 
 .PHONY: help dev run build build-linux build-macos build-windows build-all \
-        fmt fmt-check clippy test check clean
+        bundle-data fmt fmt-check clippy test check clean
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -53,6 +53,9 @@ build-windows: ## Release build for Windows x86_64 (cross via cargo-xwin)
 	$(CARGO_XWIN) build --release --target $(TARGET_WINDOWS)
 
 build-all: build-linux build-macos build-windows ## Release build for all platforms
+
+bundle-data: ## Build the self-contained arduino-cli data bundle in data/
+	scripts/bundle-data.sh
 
 fmt: ## Format the code
 	$(CARGO) fmt

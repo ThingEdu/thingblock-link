@@ -57,6 +57,15 @@ pub enum RequestBody {
         data: String,
     },
     MonitorClose {},
+    /// Install a boards platform (core) by id, e.g. `esp32:esp32`, downloading
+    /// it via the board manager. Streams `progress`/`log`; cancellable. Serialized
+    /// daemon-wide — a second install while one runs is rejected.
+    InstallPlatform {
+        platform: String,
+        /// Specific version to install; absent means the latest indexed release.
+        #[serde(default)]
+        version: Option<String>,
+    },
     /// Targets an in-flight request `id`; drops its underlying tonic stream.
     Cancel {},
 }
@@ -113,6 +122,22 @@ pub struct LibRef {
 pub struct Artifact {
     pub format: String,
     pub path: String,
+}
+
+/// Install status of a boards platform (a core such as `esp32:esp32`), as
+/// returned by the HTTP `GET /api/platforms` routes. HTTP rather than WS
+/// because it is a one-shot read — but it is the same helper↔editor contract,
+/// so it lives here with the envelope types.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlatformStatus {
+    /// Platform id, `vendor:architecture` (e.g. `esp32:esp32`).
+    pub id: String,
+    /// Human-readable name (e.g. "Arduino AVR Boards").
+    pub name: String,
+    pub installed: bool,
+    pub installed_version: Option<String>,
+    pub latest_version: Option<String>,
 }
 
 /// A connectable board, as returned by `listBoards`. Shape is opaque to the JS

@@ -17,6 +17,7 @@ use crate::daemon::Daemon;
 use crate::error::{Error, Result};
 use crate::grpc::compile::CompileEvent;
 use crate::grpc::monitor::{MonitorCommand, MonitorEvent};
+use crate::grpc::platform::PlatformInstallEvent;
 use crate::grpc::upload::UploadEvent;
 use crate::utils::tempdir::TempDir;
 use crate::ws::protocol::{
@@ -228,6 +229,45 @@ pub async fn dispatch(
             responder
                 .send(ResponseBody::Result(serde_json::json!({})))
                 .await;
+        }
+        // Long-running and cancellable like `compile`. An install mutates the
+        // shared data dir and ends with a daemon reinit, so it is serialized
+        // daemon-wide: the owned lock guard rides in the spawned task and
+        // releases on completion.
+        RequestBody::InstallPlatform { platform, version } => {
+            let (package, architecture) = platform
+                .split_once(':')
+                .filter(|(package, arch)| !package.is_empty() && !arch.is_empty())
+                .map(|(package, arch)| (package.to_string(), arch.to_string()))
+                .ok_or_else(|| {
+                    Error::InvalidRequest(format!(
+                        "installPlatform requires a `vendor:architecture` platform id, got {platform:?}"
+                    ))
+                })?;
+            let daemon = session.daemon();
+            let Ok(install_guard) = daemon.install_lock().try_lock_owned() else {
+                return Err(Error::InvalidRequest(
+                    "a platform install is already running".into(),
+                ));
+            };
+            let in_flight = session.in_flight();
+            let token = CancellationToken::new();
+            in_flight
+                .lock()
+                .expect("in_flight mutex")
+                .insert(id.to_string(), token.clone());
+            debug!(id, %platform, "installPlatform: spawning");
+
+            tokio::spawn(run_install(
+                daemon,
+                responder.clone(),
+                in_flight,
+                token,
+                install_guard,
+                package,
+                architecture,
+                version.unwrap_or_default(),
+            ));
         }
     }
 
@@ -465,6 +505,97 @@ async fn upload_stream(
                     return responder
                         .send_error(&Error::Daemon(
                             "upload ended without completing".into(),
+                        ))
+                        .await;
+                }
+            },
+        }
+    }
+}
+
+/// Drive one `installPlatform` to its terminal reply, then deregister from
+/// `in_flight`. Holds the daemon-wide install guard for its whole run. Owns
+/// every terminal for its request id (`result`, `error`, `error{cancelled}`).
+#[allow(clippy::too_many_arguments)]
+async fn run_install(
+    daemon: Arc<Daemon>,
+    responder: Responder,
+    in_flight: InFlight,
+    token: CancellationToken,
+    _install_guard: tokio::sync::OwnedMutexGuard<()>,
+    package: String,
+    architecture: String,
+    version: String,
+) {
+    let id = responder.id().to_string();
+    install_stream(
+        &daemon,
+        &responder,
+        &token,
+        &package,
+        &architecture,
+        &version,
+    )
+    .await;
+    in_flight.lock().expect("in_flight mutex").remove(&id);
+}
+
+/// The cancellable install pump. Opens the stream and translates each event into
+/// a WS response until a terminal one is sent. On success the daemon instance is
+/// reinitialized first — it does not see the newly installed core until `Init`
+/// re-runs, and the next compile would fail without it.
+async fn install_stream(
+    daemon: &Daemon,
+    responder: &Responder,
+    token: &CancellationToken,
+    package: &str,
+    architecture: &str,
+    version: &str,
+) {
+    let mut client = daemon.client();
+    let stream = match client
+        .platform_install(package, architecture, version)
+        .await
+    {
+        Ok(stream) => stream,
+        Err(e) => return responder.send_error(&e).await,
+    };
+    tokio::pin!(stream);
+
+    loop {
+        tokio::select! {
+            biased;
+            () = token.cancelled() => {
+                return responder
+                    .send(ResponseBody::Error {
+                        code: Error::Cancelled.code().into(),
+                        message: Error::Cancelled.to_string(),
+                    })
+                    .await;
+            }
+            item = stream.next() => match item {
+                Some(Ok(PlatformInstallEvent::Log(chunk))) => {
+                    responder.send(ResponseBody::Log { chunk }).await;
+                }
+                Some(Ok(PlatformInstallEvent::Progress { phase, percent })) => {
+                    responder.send(ResponseBody::Progress { phase, percent }).await;
+                }
+                Some(Ok(PlatformInstallEvent::Done)) => {
+                    return match daemon.reinit().await {
+                        Ok(()) => {
+                            responder
+                                .send(ResponseBody::Result(serde_json::json!({})))
+                                .await;
+                        }
+                        Err(e) => responder.send_error(&e).await,
+                    };
+                }
+                Some(Err(e)) => return responder.send_error(&e).await,
+                // Stream ended without a `Done`: the install did not complete.
+                None => {
+                    return responder
+                        .send_error(&Error::Daemon(
+                            "platform install ended without completing".into(),
                         ))
                         .await;
                 }

@@ -11,7 +11,7 @@ use axum::Router;
 use axum::extract::ws::WebSocket;
 use axum::extract::{State, WebSocketUpgrade};
 use axum::response::Response;
-use axum::routing::any;
+use axum::routing::{any, get};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
@@ -20,14 +20,15 @@ use tracing::info;
 use crate::daemon::Daemon;
 use crate::error::Result;
 use crate::resource::ResourceRoot;
+use crate::ws::api;
 use crate::ws::session::Session;
 
 /// Shared, immutable handles every connection needs: the daemon (gRPC) and the
 /// resource root (compile lib resolution). Cheap to clone — both are `Arc`.
 #[derive(Clone)]
-struct AppState {
-    daemon: Arc<Daemon>,
-    resource_root: Arc<ResourceRoot>,
+pub(crate) struct AppState {
+    pub(crate) daemon: Arc<Daemon>,
+    pub(crate) resource_root: Arc<ResourceRoot>,
 }
 
 /// Serve WS connections and the resource files on `listener` until shutdown,
@@ -53,7 +54,10 @@ pub async fn serve(
 
     let app = Router::new()
         .route("/", any(ws_handler))
+        .route("/api/platforms", get(api::list_platforms))
+        .route("/api/platforms/{id}", get(api::platform_status))
         .nest_service("/resources", ServeDir::new(resource_root.path()))
+        // Routes must be registered before this layer to inherit CORS/PNA.
         .layer(cors)
         .with_state(AppState {
             daemon,

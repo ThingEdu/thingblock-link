@@ -1,0 +1,13 @@
+# Shipped arduino-cli daemon config. Paths are relative on purpose: arduino-cli
+# resolves them against its working directory, and daemon.rs sets the child's
+# cwd to this file's folder — so the same file works in-tree (CARGO_MANIFEST_DIR)
+# and packaged (beside the binary) without baking absolute paths.
+board_manager:
+  additional_urls:
+    # esp32 is not bundled (its toolchain is ~1GB installed); the editor installs
+    # it on demand via the board manager, which needs this index.
+    - https://espressif.github.io/arduino-esp32/package_esp32_index.json
+directories:
+  data: data
+  downloads: data/staging
+  user: data/user

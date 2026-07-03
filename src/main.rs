@@ -34,6 +34,12 @@ struct Args {
     /// `arduino-cli-binaries/` copy is used so `cargo run` works during development.
     #[arg(long)]
     arduino_cli: Option<PathBuf>,
+
+    /// Directory holding `arduino-cli.yaml` and the `data/` bundle the daemon
+    /// runs against. Packaged builds pass the install dir; when omitted, the
+    /// crate root is used so `cargo run` works during development.
+    #[arg(long)]
+    config_dir: Option<PathBuf>,
 }
 
 /// The packaged default: a `thingblock-resource` directory laid down beside the
@@ -57,6 +63,9 @@ fn main() -> Result<()> {
     tracing::info!("thingblock-link starting");
     let args = Args::parse();
     let resource_root = args.resource_root.unwrap_or_else(default_resource_root);
+    let config_dir = args
+        .config_dir
+        .unwrap_or_else(thingblock_link::daemon::default_config_dir);
 
     // The tray (and tao's event loop) must own the main thread, so run the
     // daemon + WS server on a runtime and hand control to the tray UI, which
@@ -64,5 +73,11 @@ fn main() -> Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    tray::run(runtime, args.port, resource_root, args.arduino_cli)
+    tray::run(
+        runtime,
+        args.port,
+        resource_root,
+        args.arduino_cli,
+        config_dir,
+    )
 }

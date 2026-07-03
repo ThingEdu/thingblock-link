@@ -28,25 +28,59 @@ pub struct Daemon {
     _child: Child,
     channel: Channel,
     instance: cli::Instance,
+    /// Serializes platform installs across sessions: an install mutates the
+    /// shared data dir and ends with a [`Self::reinit`], neither of which
+    /// tolerates a concurrent install. `Arc` so an owned guard can ride in the
+    /// spawned install task.
+    install_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Daemon {
+    /// [`Self::start_with`] without a config dir: the daemon runs on arduino-cli
+    /// defaults (`~/.arduino15`). Used by tests.
+    pub async fn start(cli_path: Option<PathBuf>) -> Result<Self> {
+        Self::start_with(cli_path, None).await
+    }
+
     /// Locate `arduino-cli` (`cli_path` override, else the dev default beside
     /// the crate), spawn `arduino-cli daemon` on a free port, dial the gRPC
     /// channel, and run `Create` + `Init` to get a ready instance id.
-    pub async fn start(cli_path: Option<PathBuf>) -> Result<Self> {
+    ///
+    /// With `config_dir`, the daemon is launched with that directory's
+    /// `arduino-cli.yaml` (`--config-file`) and its cwd set to the directory,
+    /// so the config's relative `directories.*` paths resolve against it — the
+    /// self-contained `data/` bundle rather than `~/.arduino15`.
+    pub async fn start_with(
+        cli_path: Option<PathBuf>,
+        config_dir: Option<PathBuf>,
+    ) -> Result<Self> {
         let cli_path = resolve_cli_path(cli_path);
         let port = pick_free_port()?;
-        info!(binary = %cli_path.display(), port, "starting arduino-cli daemon");
+        info!(binary = %cli_path.display(), port, config_dir = ?config_dir, "starting arduino-cli daemon");
 
-        let mut child = Command::new(&cli_path)
+        let mut command = Command::new(&cli_path);
+        command
             .arg("daemon")
             .arg("--port")
             .arg(port.to_string())
             // We own the daemon's lifecycle explicitly via `kill_on_drop`, so
             // disable arduino-cli's own parent-death auto-terminate — without
             // this it exits a second or two after binding even while we're alive.
-            .arg("--daemonize")
+            .arg("--daemonize");
+        if let Some(dir) = config_dir {
+            let config_file = dir.join("arduino-cli.yaml");
+            if !config_file.is_file() {
+                return Err(Error::Daemon(format!(
+                    "config file not found: {}",
+                    config_file.display()
+                )));
+            }
+            command
+                .arg("--config-file")
+                .arg(&config_file)
+                .current_dir(&dir);
+        }
+        let mut child = command
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true)
@@ -63,7 +97,23 @@ impl Daemon {
             _child: child,
             channel,
             instance,
+            install_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
         })
+    }
+
+    /// Re-run `Init` on the instance so the daemon reloads its data dir. Must be
+    /// called after a platform install — the instance does not see a newly
+    /// installed core until then, and the next compile would fail without it.
+    pub async fn reinit(&self) -> Result<()> {
+        let mut client =
+            cli::arduino_core_service_client::ArduinoCoreServiceClient::new(self.channel.clone());
+        drain_init(&mut client, self.instance).await
+    }
+
+    /// A handle to the install lock; see the field docs. `try_lock_owned` on it
+    /// yields a guard that can move into the install task.
+    pub fn install_lock(&self) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+        self.install_lock.clone()
     }
 
     /// A clone of the gRPC channel (cheap — a handle to the shared connection).
@@ -85,6 +135,15 @@ impl Daemon {
 /// binary bundled beside the host app), else the dev default below.
 fn resolve_cli_path(override_path: Option<PathBuf>) -> PathBuf {
     override_path.unwrap_or_else(bundled_cli_path)
+}
+
+/// Dev default for the daemon config dir: the crate root, where
+/// `arduino-cli.yaml` and the `data/` bundle live in-tree, so `cargo run`
+/// works. Packaged builds pass `--config-dir` (the install dir, where the
+/// packaging step lays both down beside the binary) instead, mirroring
+/// `--arduino-cli`.
+pub fn default_config_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
 /// Dev default: the arduino-cli vendored in the crate's `arduino-cli-binaries/`,
@@ -164,6 +223,17 @@ async fn handshake(channel: Channel) -> Result<cli::Instance> {
         .instance
         .ok_or_else(|| Error::Daemon("Create returned no instance".into()))?;
 
+    drain_init(&mut client, instance).await?;
+    Ok(instance)
+}
+
+/// Run `Init` on `instance` and drain its stream until the daemon reports
+/// ready, logging (not failing on) per-item errors — arduino-cli reports e.g. a
+/// missing index that way while the instance still comes up usable.
+async fn drain_init(
+    client: &mut cli::arduino_core_service_client::ArduinoCoreServiceClient<Channel>,
+    instance: cli::Instance,
+) -> Result<()> {
     let mut init = client
         .init(cli::InitRequest {
             instance: Some(instance),
@@ -184,7 +254,7 @@ async fn handshake(channel: Channel) -> Result<cli::Instance> {
         }
     }
 
-    Ok(instance)
+    Ok(())
 }
 
 #[cfg(test)]

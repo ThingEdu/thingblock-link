@@ -24,9 +24,10 @@ self-contained process for the user to run.
 ## Status
 
 The WS pipe and the daemon handshake are in place, along with `listBoards`,
-`connect`, `disconnect`, `compile`, `upload`, `cancel`, and the serial `monitor*`
-family. Every request type is now implemented. Each row in the
-[reference](#websocket-protocol-reference) is tagged with its status.
+`connect`, `disconnect`, `compile`, `upload`, `installPlatform`, `cancel`, and the
+serial `monitor*` family. Every request type is now implemented. Each row in the
+[reference](#websocket-protocol-reference) is tagged with its status. One-shot
+reads live on a small [HTTP API](#http-api) sharing the same listener.
 
 ## Build, test, lint
 
@@ -98,6 +99,7 @@ reply (`result` or `error`). Field names are camelCase. Unsolicited helper messa
 | `monitorOpen` | `{ port, baudRate }` | `result {}` then async `monitorData` | ✅ implemented |
 | `monitorWrite` | `{ data }` | — | ✅ implemented |
 | `monitorClose` | `{}` | `result {}` | ✅ implemented |
+| `installPlatform` | `{ platform, version? }` | `result {}` (after `log`/`progress`) | ✅ implemented |
 | `cancel` | `{}` (targets the request `id`) | `error { code: "cancelled" }` on the cancelled request | ✅ implemented |
 
 ### Helper → client
@@ -158,6 +160,42 @@ daemon, so actual port existence surfaces later at upload/monitor time.
 `disconnect {}` clears the selected port (and, once `monitor` lands, closes any open
 monitor stream) and replies `result {}`.
 
+### `installPlatform`
+
+Downloads and installs a boards platform (core) via arduino-cli's board manager —
+the on-demand path for cores that don't ship in the bundle (esp32). `platform` is
+the `vendor:architecture` id (e.g. `esp32:esp32`); `version` is optional (latest
+indexed release when absent). Streams `progress {phase, percent}` (per-file
+download progress and install stages) and occasional `log` lines, then `result {}`.
+Cancellable via `cancel`.
+
+Installs are serialized daemon-wide: a second `installPlatform` while one runs — on
+any session — is rejected with `error{invalidRequest}`. On success the helper
+re-runs the daemon's `Init` before replying, so the freshly installed core is
+immediately compilable. Install status is queried over the [HTTP API](#http-api),
+not the WS.
+
+## HTTP API
+
+One-shot reads share the WS listener as plain HTTP GET routes (same CORS +
+Private-Network-Access headers as `/resources`). Errors reuse the WS terminal's
+`{code, message}` body (400 for a caller mistake, 502 for a daemon failure).
+
+| route | reply |
+| - | - |
+| `GET /api/platforms` | `{ platforms: PlatformStatus[] }` — every indexed platform |
+| `GET /api/platforms/{id}` | `PlatformStatus` for the exact `vendor:architecture` id, or 404 |
+
+```ts
+type PlatformStatus = {
+  id: string;               // "esp32:esp32"
+  name: string;             // "esp32"
+  installed: boolean;
+  installedVersion?: string;
+  latestVersion?: string;
+};
+```
+
 ## Architecture
 
 ```
@@ -166,10 +204,12 @@ src/
   daemon.rs      spawns/owns arduino-cli daemon, gRPC channel, Create/Init handshake
   grpc.rs, grpc/ generated `pb` module + `Client` wrapper; one submodule per RPC
     board.rs       BoardList -> pnpid filter -> ConnectionTarget[]
+    platform.rs    PlatformSearch/PlatformInstall -> status + install events
   ws.rs, ws/
     server.rs      axum accept loop -> Session per socket
     session.rs     per-connection state + read/dispatch/write pipe
     protocol.rs    serde structs for the JSON envelope (the cross-repo contract)
+    api.rs         one-shot HTTP JSON routes (/api/platforms)
   bridge.rs      envelope <-> gRPC translation; the only place the two schemas meet
   tray.rs        tray-icon status/quit UI + main-thread tao event loop
   window.rs      wry WebView status window (opened from the tray)
