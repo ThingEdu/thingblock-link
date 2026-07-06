@@ -9,10 +9,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::{SinkExt, StreamExt};
-use thingblock_link::daemon::{Daemon, default_config_dir};
-use thingblock_link::resource::ResourceRoot;
+use thingblock_link::server;
+use thingblock_link::service::arduino::daemon::{Daemon, default_config_dir};
+use thingblock_link::service::resource::ResourceRoot;
 use thingblock_link::utils::tempdir::TempDir;
-use thingblock_link::ws;
 use tokio::net::TcpListener;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
@@ -34,7 +34,7 @@ async fn serve_ws() -> (SocketAddr, Arc<Daemon>, TempDir) {
     let addr = listener.local_addr().expect("listener address");
     let serve_daemon = daemon.clone();
     tokio::spawn(async move {
-        ws::server::serve(listener, serve_daemon, resource_root)
+        server::router::serve(listener, serve_daemon, resource_root)
             .await
             .expect("serve");
     });

@@ -13,17 +13,17 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
-use crate::daemon::Daemon;
 use crate::error::{Error, Result};
-use crate::grpc::compile::CompileEvent;
-use crate::grpc::monitor::{MonitorCommand, MonitorEvent};
-use crate::grpc::platform::PlatformInstallEvent;
-use crate::grpc::upload::UploadEvent;
-use crate::utils::tempdir::TempDir;
-use crate::ws::protocol::{
+use crate::server::protocol::{
     Artifact, CompileOptions, CompileResult, ListBoardsResult, RequestBody, Response, ResponseBody,
 };
-use crate::ws::session::{InFlight, MonitorSession, Session};
+use crate::server::session::{InFlight, MonitorSession, Session};
+use crate::service::arduino::daemon::Daemon;
+use crate::service::arduino::grpc::compile::CompileEvent;
+use crate::service::arduino::grpc::monitor::{MonitorCommand, MonitorEvent};
+use crate::service::arduino::grpc::platform::PlatformInstallEvent;
+use crate::service::arduino::grpc::upload::UploadEvent;
+use crate::utils::tempdir::TempDir;
 
 /// How many outbound monitor commands (writes / close) may queue before
 /// backpressure applies. Serial writes from the editor are small and infrequent.

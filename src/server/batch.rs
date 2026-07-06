@@ -9,7 +9,7 @@
 //! Only `log` / `monitorData` are batched; terminal (`result`/`error`), `progress`
 //! and `event` messages bypass the buffer and are sent promptly.
 
-use crate::ws::protocol::{Response, ResponseBody};
+use crate::server::protocol::{Response, ResponseBody};
 
 /// Whether a response may be buffered/coalesced (streamed text). Terminal,
 /// progress and event messages return `false` and are sent promptly.

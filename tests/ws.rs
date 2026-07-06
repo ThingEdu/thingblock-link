@@ -8,10 +8,10 @@ use std::net::Ipv4Addr;
 use std::sync::Arc;
 
 use futures::{SinkExt, StreamExt};
-use thingblock_link::daemon::Daemon;
-use thingblock_link::resource::ResourceRoot;
+use thingblock_link::server;
+use thingblock_link::service::arduino::daemon::Daemon;
+use thingblock_link::service::resource::ResourceRoot;
 use thingblock_link::utils::tempdir::TempDir;
-use thingblock_link::ws;
 use tokio::net::TcpListener;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
@@ -27,7 +27,7 @@ async fn ws_round_trip_list_boards_returns_result() {
         .expect("bind ws listener");
     let addr = listener.local_addr().expect("listener address");
     tokio::spawn(async move {
-        ws::server::serve(listener, daemon, resource_root)
+        server::router::serve(listener, daemon, resource_root)
             .await
             .expect("serve");
     });

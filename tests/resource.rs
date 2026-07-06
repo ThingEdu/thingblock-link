@@ -4,7 +4,7 @@
 
 use std::fs;
 
-use thingblock_link::resource::ResourceRoot;
+use thingblock_link::service::resource::ResourceRoot;
 use thingblock_link::utils::tempdir::TempDir;
 
 #[test]

@@ -5,8 +5,10 @@
 
 use std::collections::HashMap;
 
-use thingblock_link::grpc::board::{count_board_ports, detected_ports_to_targets};
-use thingblock_link::grpc::cli::{BoardListItem, DetectedPort, Port};
+use thingblock_link::service::arduino::grpc::board::{
+    count_board_ports, detected_ports_to_targets,
+};
+use thingblock_link::service::arduino::grpc::cli::{BoardListItem, DetectedPort, Port};
 
 /// An Uno-shaped serial port: VID 2341 / PID 0043, with a matching board.
 fn uno_port() -> DetectedPort {

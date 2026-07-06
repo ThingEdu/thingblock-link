@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use thingblock_link::error::Result;
-use thingblock_link::tray;
+use thingblock_link::ui::tray;
 
 /// WS port the editor connects to. A contract detail with the editor; override
 /// with `--port` until the two sides are pinned together.
@@ -65,7 +65,7 @@ fn main() -> Result<()> {
     let resource_root = args.resource_root.unwrap_or_else(default_resource_root);
     let config_dir = args
         .config_dir
-        .unwrap_or_else(thingblock_link::daemon::default_config_dir);
+        .unwrap_or_else(thingblock_link::service::arduino::daemon::default_config_dir);
 
     // The tray (and tao's event loop) must own the main thread, so run the
     // daemon + WS server on a runtime and hand control to the tray UI, which

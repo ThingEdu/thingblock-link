@@ -15,14 +15,14 @@ use tokio::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
-use crate::bridge::{self, Responder};
-use crate::daemon::Daemon;
 use crate::error::Result;
-use crate::grpc::monitor::MonitorCommand;
-use crate::resource::ResourceRoot;
+use crate::server::batch::{is_batchable, push_coalesced};
+use crate::server::protocol::{Request, Response, ResponseBody};
+use crate::service::arduino::bridge::{self, Responder};
+use crate::service::arduino::daemon::Daemon;
+use crate::service::arduino::grpc::monitor::MonitorCommand;
+use crate::service::resource::ResourceRoot;
 use crate::utils::tempdir::TempDir;
-use crate::ws::batch::{is_batchable, push_coalesced};
-use crate::ws::protocol::{Request, Response, ResponseBody};
 
 /// How many responses may queue toward the socket before backpressure applies.
 const RESPONSE_CHANNEL_CAPACITY: usize = 64;

@@ -4,8 +4,8 @@
 //! board, so it is exercised by manual end-to-end runs rather than here (the same
 //! boundary `compile` and `upload` draw).
 
-use thingblock_link::grpc::cli;
-use thingblock_link::grpc::monitor::build_open_request;
+use thingblock_link::service::arduino::grpc::cli;
+use thingblock_link::service::arduino::grpc::monitor::build_open_request;
 
 fn instance() -> cli::Instance {
     cli::Instance { id: 7 }

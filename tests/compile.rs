@@ -5,9 +5,9 @@
 
 use std::fs;
 
-use thingblock_link::grpc::compile::find_artifact;
+use thingblock_link::server::protocol::CompileOptions;
+use thingblock_link::service::arduino::grpc::compile::find_artifact;
 use thingblock_link::utils::tempdir::TempDir;
-use thingblock_link::ws::protocol::CompileOptions;
 
 /// A build dir under a self-cleaning temp dir, plus a helper to drop files in it.
 fn build_dir() -> TempDir {

@@ -3,7 +3,7 @@
 //! plain HTTP better than the WS envelope (curl-able, no socket or id
 //! correlation needed); the streaming install itself stays on the WS
 //! (`installPlatform`). Routes share the WS listener and inherit its CORS/PNA
-//! layer (see [`crate::ws::server`]).
+//! layer (see [`crate::server::router`]).
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -11,7 +11,7 @@ use axum::http::StatusCode;
 use serde_json::json;
 
 use crate::error::Error;
-use crate::ws::server::AppState;
+use crate::server::router::AppState;
 
 /// Error responses reuse the WS terminal's `{code, message}` shape.
 type ApiError = (StatusCode, Json<serde_json::Value>);

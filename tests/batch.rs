@@ -2,8 +2,8 @@
 //! no daemon — the 100 ms flush timing in the writer task is exercised by manual
 //! end-to-end runs (see the design doc). Kept under `tests/` per the project rule.
 
-use thingblock_link::ws::batch::{is_batchable, push_coalesced};
-use thingblock_link::ws::protocol::{Response, ResponseBody};
+use thingblock_link::server::batch::{is_batchable, push_coalesced};
+use thingblock_link::server::protocol::{Response, ResponseBody};
 
 fn log(id: &str, chunk: &str) -> Response {
     Response {

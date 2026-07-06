@@ -2,7 +2,7 @@
 //! contract). Kept here rather than inline in `src/` so source files stay focused
 //! on implementation.
 
-use thingblock_link::ws::protocol::{
+use thingblock_link::server::protocol::{
     ListBoardsResult, Request, RequestBody, Response, ResponseBody,
 };
 

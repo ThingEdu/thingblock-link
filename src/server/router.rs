@@ -1,9 +1,9 @@
-//! WS accept loop and the static resource route. Serves `ws://localhost:PORT`
-//! (localhost is a secure context, so no TLS pre-M5) on a caller-provided
-//! listener, upgrades each connection, and drives a [`Session`] per socket. The
-//! same listener also serves the resource root over HTTP at `/resources` so the
+//! The axum app: WS accept loop plus the HTTP routes, on one listener. Serves
+//! `ws://localhost:PORT` (localhost is a secure context, so no TLS pre-M5),
+//! upgrades each WS connection, and drives a [`Session`] per socket. The same
+//! listener also serves the resource root over HTTP at `/resources` so the
 //! editor can `import()` pack files — a sandboxed browser can't read the helper's
-//! filesystem, so HTTP is the only handle it has (see [`crate::resource`]).
+//! filesystem, so HTTP is the only handle it has (see [`crate::service::resource`]).
 
 use std::sync::Arc;
 
@@ -15,13 +15,13 @@ use axum::routing::{any, get};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
-use tracing::info;
+use tracing::{info, warn};
 
-use crate::daemon::Daemon;
 use crate::error::Result;
-use crate::resource::ResourceRoot;
-use crate::ws::api;
-use crate::ws::session::Session;
+use crate::server::api;
+use crate::server::session::Session;
+use crate::service::arduino::daemon::Daemon;
+use crate::service::resource::ResourceRoot;
 
 /// Shared, immutable handles every connection needs: the daemon (gRPC) and the
 /// resource root (compile lib resolution). Cheap to clone — both are `Arc`.
@@ -52,10 +52,33 @@ pub async fn serve(
         .allow_headers(Any)
         .allow_private_network(true);
 
+    // The `/io` BLE channel lives entirely in `crate::service::ble`, isolated from the
+    // flash channel above. Adapter discovery failure must not break the rest
+    // of the server — it just means `/io` rejects every request with a BLE
+    // error until a radio is available.
+    let ble = match crate::service::ble::transport::Ble::discover().await {
+        Ok(Some(b)) => {
+            info!("ble adapter ready");
+            Some(Arc::new(b))
+        }
+        Ok(None) => {
+            info!("no ble adapter; /io will reject requests");
+            None
+        }
+        Err(e) => {
+            warn!(error = %e, "ble init failed; /io disabled");
+            None
+        }
+    };
+
     let app = Router::new()
         .route("/", any(ws_handler))
         .route("/api/platforms", get(api::list_platforms))
         .route("/api/platforms/{id}", get(api::platform_status))
+        .route(
+            "/io",
+            any(move |ws: WebSocketUpgrade| crate::service::ble::upgrade(ws, ble.clone())),
+        )
         .nest_service("/resources", ServeDir::new(resource_root.path()))
         // Routes must be registered before this layer to inherit CORS/PNA.
         .layer(cors)

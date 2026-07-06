@@ -2,7 +2,7 @@
 //! v1.5.1 binary. Offline-safe: `Init` only reads the local data dir. Requires
 //! the per-platform binary under `arduino-cli-binaries/` to be present.
 
-use thingblock_link::daemon::{Daemon, default_config_dir};
+use thingblock_link::service::arduino::daemon::{Daemon, default_config_dir};
 
 #[tokio::test]
 async fn starts_daemon_and_completes_handshake() {

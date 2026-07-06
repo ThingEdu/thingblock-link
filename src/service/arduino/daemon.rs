@@ -16,7 +16,7 @@ use tonic::transport::Channel;
 use tracing::{debug, info, warn};
 
 use crate::error::{Error, Result};
-use crate::grpc::{Client, cli};
+use crate::service::arduino::grpc::{Client, cli};
 
 /// How long to wait for the freshly spawned daemon to start accepting gRPC.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);

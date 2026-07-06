@@ -33,8 +33,20 @@ pub enum Error {
     #[error("resource: {0}")]
     Resource(String),
 
+    /// A BLE operation failed: the adapter subsystem errored, a peripheral
+    /// wasn't in the scan cache, or a requested characteristic doesn't exist
+    /// on the connected device.
+    #[error("ble: {0}")]
+    Ble(String),
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
+}
+
+impl From<btleplug::Error> for Error {
+    fn from(e: btleplug::Error) -> Self {
+        Error::Ble(e.to_string())
+    }
 }
 
 impl Error {
@@ -46,6 +58,7 @@ impl Error {
             Error::Grpc(_) => "grpc",
             Error::Cancelled => "cancelled",
             Error::Resource(_) => "resource",
+            Error::Ble(_) => "ble",
             Error::Io(_) => "io",
         }
     }

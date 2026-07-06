@@ -7,10 +7,10 @@
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
-use thingblock_link::daemon::{Daemon, default_config_dir};
-use thingblock_link::resource::ResourceRoot;
+use thingblock_link::server;
+use thingblock_link::service::arduino::daemon::{Daemon, default_config_dir};
+use thingblock_link::service::resource::ResourceRoot;
 use thingblock_link::utils::tempdir::TempDir;
-use thingblock_link::ws;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -69,7 +69,7 @@ async fn serve_api() -> (SocketAddr, TempDir) {
         .expect("bind listener");
     let addr = listener.local_addr().expect("listener address");
     tokio::spawn(async move {
-        ws::server::serve(listener, daemon, resource_root)
+        server::router::serve(listener, daemon, resource_root)
             .await
             .expect("serve");
     });

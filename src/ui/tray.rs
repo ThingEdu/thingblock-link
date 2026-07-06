@@ -21,10 +21,10 @@ use tracing::{error, info, warn};
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
-use crate::daemon::Daemon;
-use crate::resource::ResourceRoot;
-use crate::window::{self, StatusView, StatusWindow, Telemetry};
-use crate::ws;
+use crate::server;
+use crate::service::arduino::daemon::Daemon;
+use crate::service::resource::ResourceRoot;
+use crate::ui::window::{self, StatusView, StatusWindow, Telemetry};
 
 /// How often the status window's board-count / health rows are refreshed.
 const TELEMETRY_INTERVAL: Duration = Duration::from_secs(3);
@@ -257,7 +257,7 @@ async fn run_services(
     // `Arc`; lives as long as the loop accepts events.
     tokio::spawn(poll_telemetry(daemon.clone(), proxy.clone()));
 
-    if let Err(e) = ws::server::serve(listener, daemon, resource_root).await {
+    if let Err(e) = server::router::serve(listener, daemon, resource_root).await {
         error!(error = %e, "ws server stopped");
         let _ = proxy.send_event(UserEvent::Status(Status::Failed(e.to_string())));
     }
@@ -327,7 +327,7 @@ fn build_tray() -> Tray {
 /// safe cross-platform default (see `brand/DESIGN.md`); this is the base the
 /// per-status [`icon_for`] variants are derived from.
 fn glyph_rgba() -> image::RgbaImage {
-    const PNG: &[u8] = include_bytes!("../brand/icons/icon-32.png");
+    const PNG: &[u8] = include_bytes!("../../brand/icons/icon-32.png");
     image::load_from_memory(PNG)
         .expect("decode embedded tray icon png")
         .into_rgba8()

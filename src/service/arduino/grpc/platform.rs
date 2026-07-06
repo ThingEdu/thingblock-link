@@ -8,8 +8,8 @@ use futures::Stream;
 use tonic::Streaming;
 
 use crate::error::{Error, Result};
-use crate::grpc::{Client, cli};
-use crate::ws::protocol::PlatformStatus;
+use crate::server::protocol::PlatformStatus;
+use crate::service::arduino::grpc::{Client, cli};
 
 /// One translated step of a platform install, in the helper's own shapes.
 #[derive(Debug)]
@@ -19,7 +19,7 @@ pub enum PlatformInstallEvent {
     /// Download / installation progress.
     Progress { phase: String, percent: f32 },
     /// Terminal success. The caller must reinit the daemon instance before the
-    /// new platform is compilable (see [`crate::daemon::Daemon::reinit`]).
+    /// new platform is compilable (see [`crate::service::arduino::daemon::Daemon::reinit`]).
     Done,
 }
 

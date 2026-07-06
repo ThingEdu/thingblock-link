@@ -14,8 +14,8 @@ use futures::Stream;
 use tonic::Streaming;
 
 use crate::error::{Error, Result};
-use crate::grpc::{Client, cli};
-use crate::ws::protocol::{Artifact, CompileOptions};
+use crate::server::protocol::{Artifact, CompileOptions};
+use crate::service::arduino::grpc::{Client, cli};
 
 /// One translated step of a compile, in the helper's own shapes.
 #[derive(Debug)]

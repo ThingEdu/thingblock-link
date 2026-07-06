@@ -1,7 +1,7 @@
 //! The status window: a `wry` WebView, opened from the tray, showing live helper
 //! state (status + WS port, arduino-cli health, connected-board count).
 //!
-//! The window is owned by the tao event loop in [`crate::tray`] — this module
+//! The window is owned by the tao event loop in [`crate::ui::tray`] — this module
 //! only knows how to *build* one and push state into it. It stays ignorant of
 //! the loop's `UserEvent`: the Quit button is wired through a host-supplied IPC
 //! callback ([`build`]'s `on_ipc`), so there is no dependency back on `tray`.
@@ -145,8 +145,8 @@ fn build_webview(builder: WebViewBuilder<'_>, window: &Window) -> WebView {
 /// initial state so the window paints correctly the instant it loads (before any
 /// live `evaluate_script` update arrives).
 fn render_html(status: &StatusView, telemetry: Telemetry) -> String {
-    const TEMPLATE: &str = include_str!("../assets/status.html");
-    const GLYPH: &str = include_str!("../brand/thingblock-icon.svg");
+    const TEMPLATE: &str = include_str!("../../assets/status.html");
+    const GLYPH: &str = include_str!("../../brand/thingblock-icon.svg");
 
     let status_json = serde_json::to_string(status).expect("serialize initial status");
     let telemetry_json = serde_json::to_string(&telemetry).expect("serialize initial telemetry");
