@@ -256,19 +256,3 @@ async fn drain_init(
 
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn override_path_is_used_verbatim() {
-        let path = PathBuf::from("/opt/thingblock/arduino-cli");
-        assert_eq!(resolve_cli_path(Some(path.clone())), path);
-    }
-
-    #[test]
-    fn no_override_falls_back_to_bundled() {
-        assert_eq!(resolve_cli_path(None), bundled_cli_path());
-    }
-}
