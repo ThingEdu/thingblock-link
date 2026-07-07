@@ -115,6 +115,11 @@ pub fn run(
     // the window is (lazily) built.
     let ipc_proxy = proxy.clone();
 
+    // The desktop shell's shutdown signal rides stdin rather than the WS server,
+    // so it keeps working even if the server is unhealthy.
+    let stdin_proxy = proxy.clone();
+    runtime.spawn(watch_stdin_for_shutdown(stdin_proxy));
+
     // Start the daemon + WS server + telemetry poller; status flows back through
     // the proxy.
     runtime.spawn(run_services(
@@ -197,6 +202,18 @@ pub fn run(
             _ => {}
         }
     })
+}
+
+/// The desktop shell's shutdown signal: any stdin activity (bytes or EOF) means
+/// "quit". Stdin carries no other traffic, so content is irrelevant — this just
+/// needs a channel that behaves identically across platforms (no OS signal does)
+/// and, unlike the WS server, can't get stuck behind unrelated request handling.
+async fn watch_stdin_for_shutdown(proxy: EventLoopProxy<UserEvent>) {
+    use tokio::io::AsyncReadExt;
+    let mut buf = [0u8; 64];
+    let _ = tokio::io::stdin().read(&mut buf).await;
+    info!("stdin shutdown signal received");
+    let _ = proxy.send_event(UserEvent::Quit);
 }
 
 /// Tear down the helper: dropping the runtime drops the last `Arc<Daemon>`,
