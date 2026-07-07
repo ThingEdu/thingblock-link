@@ -260,15 +260,18 @@ impl BleSession {
             .map(|s| parse_uuid(s))
             .collect::<Result<Vec<_>>>()?;
 
+        debug!(id = %responder.id(), ?services, ?name_prefix, "ble scan requested");
+
         let token = CancellationToken::new();
         self.scans.insert(responder.id().to_string(), token.clone());
 
         let responder = responder.clone();
         let scan_ble = Arc::clone(&ble);
         tokio::spawn(async move {
-            let stream = match scan_ble.clone().scan(services, name_prefix).await {
-                Ok(stream) => stream,
+            let (generation, stream) = match scan_ble.clone().scan(services, name_prefix).await {
+                Ok(scan) => scan,
                 Err(e) => {
+                    warn!(id = %responder.id(), error = %e, "ble scan failed to start");
                     responder
                         .send(BleResponseBody::Error {
                             code: e.code().into(),
@@ -278,18 +281,26 @@ impl BleSession {
                     return;
                 }
             };
+            debug!(id = %responder.id(), generation, "ble scan started");
             tokio::pin!(stream);
 
             loop {
                 tokio::select! {
                     () = token.cancelled() => {
-                        let _ = scan_ble.stop_scan().await;
+                        debug!(id = %responder.id(), generation, "ble scan cancelled");
+                        let _ = scan_ble.release_scan(generation).await;
                         responder.send(BleResponseBody::Result(json!({}))).await;
                         return;
                     }
                     device = stream.next() => {
                         match device {
                             Some(device) => {
+                                debug!(
+                                    id = %responder.id(),
+                                    device_id = %device.id,
+                                    rssi = ?device.rssi,
+                                    "ble scan hit"
+                                );
                                 responder
                                     .send(BleResponseBody::Device {
                                         device_id: device.id,
@@ -300,7 +311,10 @@ impl BleSession {
                             }
                             None => {
                                 // The adapter stopped the scan on its own;
-                                // still owe the client a terminal reply.
+                                // release our generation and still owe the
+                                // client a terminal reply.
+                                debug!(id = %responder.id(), generation, "ble scan ended by adapter");
+                                let _ = scan_ble.release_scan(generation).await;
                                 responder.send(BleResponseBody::Result(json!({}))).await;
                                 return;
                             }
@@ -318,6 +332,7 @@ impl BleSession {
     /// mutation confined to this single-threaded dispatch path. A no-op if
     /// that scan already finished or never existed.
     fn handle_cancel(&mut self, responder: &Responder) {
+        debug!(id = %responder.id(), "ble cancel requested");
         if let Some(token) = self.scans.remove(responder.id()) {
             token.cancel();
         }
@@ -333,6 +348,7 @@ impl BleSession {
         tx: &mpsc::Sender<BleResponse>,
         disconnect_tx: &mpsc::Sender<String>,
     ) -> Result<()> {
+        debug!(id = %responder.id(), %device_id, "ble connect requested");
         let conn = ble.connect(&device_id).await?;
         let notifications = conn.notifications().await?;
 
@@ -341,6 +357,12 @@ impl BleSession {
         let pump = tokio::spawn(async move {
             tokio::pin!(notifications);
             while let Some(notification) = notifications.next().await {
+                debug!(
+                    device_id = %notify_device_id,
+                    characteristic = %notification.characteristic,
+                    bytes = notification.data.len(),
+                    "ble notification received"
+                );
                 notify_responder
                     .send(BleResponseBody::Notify {
                         device_id: notify_device_id.clone(),
@@ -362,6 +384,7 @@ impl BleSession {
             self.disconnect_watch = Some(spawn_disconnect_watch(ble, disconnect_tx.clone()));
         }
 
+        debug!(id = %responder.id(), %device_id, "ble connect succeeded");
         responder
             .send(BleResponseBody::Result(json!({"deviceId": device_id})))
             .await;
@@ -371,6 +394,7 @@ impl BleSession {
     /// Disconnect a device this session holds open. Safe to call for an
     /// unknown or already-disconnected id.
     async fn handle_disconnect(&mut self, device_id: String, responder: &Responder) -> Result<()> {
+        debug!(id = %responder.id(), %device_id, "ble disconnect requested");
         if let Some(pump) = self.pumps.remove(&device_id) {
             pump.abort();
         }
@@ -390,6 +414,11 @@ impl BleSession {
         with_response: bool,
         responder: &Responder,
     ) -> Result<()> {
+        debug!(
+            id = %responder.id(), %device_id, %service, %characteristic,
+            bytes = data.len(), with_response,
+            "ble write requested"
+        );
         let conn = self.require_connected(&device_id)?;
         let service = parse_uuid(&service)?;
         let characteristic = parse_uuid(&characteristic)?;
@@ -409,10 +438,12 @@ impl BleSession {
         characteristic: String,
         responder: &Responder,
     ) -> Result<()> {
+        debug!(id = %responder.id(), %device_id, %service, %characteristic, "ble read requested");
         let conn = self.require_connected(&device_id)?;
         let service = parse_uuid(&service)?;
         let characteristic = parse_uuid(&characteristic)?;
         let data = conn.read(service, characteristic).await?;
+        debug!(id = %responder.id(), bytes = data.len(), "ble read completed");
         responder
             .send(BleResponseBody::Result(
                 json!({"data": BASE64.encode(data)}),
@@ -428,6 +459,7 @@ impl BleSession {
         characteristic: String,
         responder: &Responder,
     ) -> Result<()> {
+        debug!(id = %responder.id(), %device_id, %service, %characteristic, "ble subscribe requested");
         let conn = self.require_connected(&device_id)?;
         let service = parse_uuid(&service)?;
         let characteristic = parse_uuid(&characteristic)?;
@@ -443,6 +475,7 @@ impl BleSession {
         characteristic: String,
         responder: &Responder,
     ) -> Result<()> {
+        debug!(id = %responder.id(), %device_id, %service, %characteristic, "ble unsubscribe requested");
         let conn = self.require_connected(&device_id)?;
         let service = parse_uuid(&service)?;
         let characteristic = parse_uuid(&characteristic)?;
@@ -471,6 +504,7 @@ impl BleSession {
         if self.connected.remove(&device_id).is_none() {
             return;
         }
+        debug!(%device_id, "ble peripheral disconnected unexpectedly");
         if let Some(pump) = self.pumps.remove(&device_id) {
             pump.abort();
         }
@@ -493,11 +527,11 @@ impl BleSession {
         for (_, pump) in self.pumps.drain() {
             pump.abort();
         }
+        // Cancelling the tokens is enough for scans: each scan task releases
+        // its own generation, and stopping the adapter directly here could
+        // kill a newer scan owned by another session.
         for (_, token) in self.scans.drain() {
             token.cancel();
-        }
-        if let Some(ble) = &self.ble {
-            let _ = ble.stop_scan().await;
         }
         for (_, conn) in self.connected.drain() {
             let _ = conn.disconnect().await;

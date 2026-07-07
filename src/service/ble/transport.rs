@@ -21,6 +21,7 @@ use btleplug::api::{
 };
 use btleplug::platform::{Adapter, Manager, Peripheral};
 use futures::{Stream, StreamExt};
+use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
 
 use crate::error::{Error, Result};
@@ -32,9 +33,17 @@ use crate::error::{Error, Result};
 /// by the string form of its `btleplug` id. `connect` looks a peripheral up
 /// here rather than re-scanning, since `PeripheralId` cannot be reconstructed
 /// from the string we hand to the browser.
+///
+/// Scanning is adapter-global, so `scan_generation` arbitrates ownership:
+/// each [`Ble::scan`] bumps it under the lock, and [`Ble::release_scan`] only
+/// stops the adapter if the caller's generation is still current. That way a
+/// cancelled scan's cleanup can never kill the scan that replaced it, and the
+/// lock serializes start/stop calls so the adapter never sees a start while
+/// an older scan is still being torn down.
 pub struct Ble {
     adapter: Adapter,
     discovered: Mutex<HashMap<String, Peripheral>>,
+    scan_generation: AsyncMutex<u64>,
 }
 
 /// A scan hit, handed to the browser. Carries the same string id `connect`
@@ -76,63 +85,98 @@ impl Ble {
         Ok(Some(Ble {
             adapter,
             discovered: Mutex::new(HashMap::new()),
+            scan_generation: AsyncMutex::new(0),
         }))
     }
 
-    /// Start scanning and return a stream of matching [`Device`]s. Takes
-    /// `Arc<Self>` and returns a `'static` stream so a caller can spawn a task
-    /// that owns the stream independently of whoever called `scan`.
+    /// Start scanning and return the scan's generation plus a stream of
+    /// matching [`Device`]s. Takes `Arc<Self>` and returns a `'static` stream
+    /// so a caller can spawn a task that owns the stream independently of
+    /// whoever called `scan`. Pass the generation to [`Ble::release_scan`]
+    /// when done with the stream.
+    ///
+    /// Any scan already running is stopped first (its owner's later
+    /// `release_scan` becomes a no-op once the generation moves on), so
+    /// restarting a scan never races the previous scan's teardown into an
+    /// adapter-level "already scanning" error.
     ///
     /// Every peripheral the adapter reports (discovered or updated) is
-    /// resolved to its properties, filtered by `name_prefix` if given, cached
-    /// in `discovered` under its string id, and yielded as a `Device`. A
-    /// peripheral that briefly fails to resolve (e.g. a stale advertisement)
-    /// is skipped rather than failing the whole stream.
+    /// resolved to its properties, filtered by `services` and `name_prefix`
+    /// if given, cached in `discovered` under its string id, and yielded as a
+    /// `Device`. A peripheral that briefly fails to resolve (e.g. a stale
+    /// advertisement) is skipped rather than failing the whole stream.
+    ///
+    /// The `services` filter is re-checked here against each device's own
+    /// advertised services rather than trusted to `start_scan`'s adapter-level
+    /// filter alone: on Linux, `btleplug`'s BlueZ backend replays a
+    /// `DeviceDiscovered` event for every device the adapter already has
+    /// cached (previously paired or seen) when [`Adapter::events`] opens,
+    /// regardless of the active scan filter, so an unrelated cached device
+    /// can otherwise leak through as a false hit.
     pub async fn scan(
         self: Arc<Self>,
         services: Vec<Uuid>,
         name_prefix: Option<String>,
-    ) -> Result<impl Stream<Item = Device> + 'static> {
-        self.adapter.start_scan(ScanFilter { services }).await?;
+    ) -> Result<(u64, impl Stream<Item = Device> + 'static)> {
+        let filter_services = services.clone();
+        let generation = {
+            let mut current = self.scan_generation.lock().await;
+            *current += 1;
+            let _ = self.adapter.stop_scan().await;
+            self.adapter.start_scan(ScanFilter { services }).await?;
+            *current
+        };
         let events = self.adapter.events().await?;
 
-        Ok(events.filter_map(move |event| {
-            let this = self.clone();
-            let name_prefix = name_prefix.clone();
-            async move {
-                let id = match event {
-                    CentralEvent::DeviceDiscovered(id) | CentralEvent::DeviceUpdated(id) => id,
-                    _ => return None,
-                };
-                let peripheral = this.adapter.peripheral(&id).await.ok()?;
-                let props = peripheral.properties().await.ok()??;
-                if let Some(prefix) = &name_prefix {
-                    let matches = props
-                        .local_name
-                        .as_deref()
-                        .is_some_and(|name| name.starts_with(prefix.as_str()));
-                    if !matches {
+        Ok((
+            generation,
+            events.filter_map(move |event| {
+                let this = self.clone();
+                let name_prefix = name_prefix.clone();
+                let filter_services = filter_services.clone();
+                async move {
+                    let id = match event {
+                        CentralEvent::DeviceDiscovered(id) | CentralEvent::DeviceUpdated(id) => id,
+                        _ => return None,
+                    };
+                    let peripheral = this.adapter.peripheral(&id).await.ok()?;
+                    let props = peripheral.properties().await.ok()??;
+                    if !matches_services(&props.services, &filter_services) {
                         return None;
                     }
-                }
+                    if let Some(prefix) = &name_prefix {
+                        let matches = props
+                            .local_name
+                            .as_deref()
+                            .is_some_and(|name| name.starts_with(prefix.as_str()));
+                        if !matches {
+                            return None;
+                        }
+                    }
 
-                let key = id.to_string();
-                this.discovered
-                    .lock()
-                    .expect("discovered mutex")
-                    .insert(key.clone(), peripheral);
-                Some(Device {
-                    id: key,
-                    name: props.local_name,
-                    rssi: props.rssi,
-                })
-            }
-        }))
+                    let key = id.to_string();
+                    this.discovered
+                        .lock()
+                        .expect("discovered mutex")
+                        .insert(key.clone(), peripheral);
+                    Some(Device {
+                        id: key,
+                        name: props.local_name,
+                        rssi: props.rssi,
+                    })
+                }
+            }),
+        ))
     }
 
-    /// Stop an in-progress scan. Idempotent per `btleplug`.
-    pub async fn stop_scan(&self) -> Result<()> {
-        self.adapter.stop_scan().await?;
+    /// Stop the scan started under `generation`, if it is still the adapter's
+    /// current one. A stale generation (a newer scan has since started) is a
+    /// no-op, so releasing a finished scan can never stop its replacement.
+    pub async fn release_scan(&self, generation: u64) -> Result<()> {
+        let current = self.scan_generation.lock().await;
+        if *current == generation {
+            self.adapter.stop_scan().await?;
+        }
         Ok(())
     }
 
@@ -252,4 +296,11 @@ impl Conn {
                 ))
             })
     }
+}
+
+/// Whether a device's advertised `services` satisfy a scan's `filter`,
+/// mirroring [`ScanFilter`]'s documented semantics: an empty filter matches
+/// everything, a non-empty one requires at least one overlapping UUID.
+pub fn matches_services(advertised: &[Uuid], filter: &[Uuid]) -> bool {
+    filter.is_empty() || filter.iter().any(|uuid| advertised.contains(uuid))
 }

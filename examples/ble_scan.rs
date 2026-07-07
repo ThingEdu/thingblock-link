@@ -25,7 +25,7 @@ async fn main() {
         .expect("adapter subsystem error")
         .expect("no BLE adapter found on this machine");
 
-    let devices = Arc::new(ble)
+    let (_generation, devices) = Arc::new(ble)
         .scan(vec![THINGBOT_SERVICE_UUID], None)
         .await
         .expect("failed to start scan");

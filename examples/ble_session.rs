@@ -35,7 +35,7 @@ async fn main() {
     let ble = Arc::new(ble);
 
     println!("scanning for a ThingBot device...");
-    let devices = ble
+    let (scan_generation, devices) = ble
         .clone()
         .scan(vec![THINGBOT_SERVICE_UUID], None)
         .await
@@ -45,7 +45,9 @@ async fn main() {
         .next()
         .await
         .expect("no ThingBot device found before the stream ended");
-    ble.stop_scan().await.expect("failed to stop scan");
+    ble.release_scan(scan_generation)
+        .await
+        .expect("failed to stop scan");
     println!("found {device:?}, connecting...");
 
     let conn = ble.connect(&device.id).await.expect("failed to connect");
