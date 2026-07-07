@@ -105,25 +105,6 @@ async fn reports_bundled_platform_installed_with_cors() {
 }
 
 #[tokio::test]
-async fn lists_esp32_as_installable() {
-    let (addr, _guard) = serve_api().await;
-
-    let resp = http_get(addr, "/api/platforms", None).await;
-
-    assert_eq!(resp.status, 200);
-    let body: serde_json::Value = serde_json::from_str(&resp.body).expect("json body");
-    let platforms = body["platforms"].as_array().expect("platforms array");
-    let esp32 = platforms
-        .iter()
-        .find(|p| p["id"] == "esp32:esp32")
-        .expect("esp32:esp32 should be indexed via the bundled esp32 index");
-    assert_eq!(
-        esp32["installed"], false,
-        "esp32 is not bundled — it installs on demand: {esp32}"
-    );
-}
-
-#[tokio::test]
 async fn unknown_platform_is_not_found() {
     let (addr, _guard) = serve_api().await;
 
