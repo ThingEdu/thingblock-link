@@ -11,11 +11,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-case "$(uname -s)" in
-    Darwin) cli=arduino-cli-binaries/arduino-cli_mac_arm64/arduino-cli ;;
-    Linux)  cli=arduino-cli-binaries/arduino-cli_linux_64bit/arduino-cli ;;
-    MINGW* | MSYS* | CYGWIN*) cli=arduino-cli-binaries/arduino-cli_win_64bit/arduino-cli.exe ;;
-    *) echo "unsupported host OS: $(uname -s)" >&2; exit 1 ;;
+case "$(uname -s)-$(uname -m)" in
+    Darwin-*)      cli=arduino-cli-binaries/arduino-cli_mac_arm64/arduino-cli ;;
+    Linux-aarch64) cli=arduino-cli-binaries/arduino-cli_linux_arm64/arduino-cli ;;
+    Linux-*)       cli=arduino-cli-binaries/arduino-cli_linux_64bit/arduino-cli ;;
+    MINGW*-* | MSYS*-* | CYGWIN*-*) cli=arduino-cli-binaries/arduino-cli_win_64bit/arduino-cli.exe ;;
+    *) echo "unsupported host: $(uname -s)-$(uname -m)" >&2; exit 1 ;;
 esac
 
 "$cli" --config-file arduino-cli.yaml core update-index

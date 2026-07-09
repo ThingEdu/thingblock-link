@@ -154,6 +154,8 @@ fn bundled_cli_path() -> PathBuf {
         ("arduino-cli_win_64bit", "arduino-cli.exe")
     } else if cfg!(target_os = "macos") {
         ("arduino-cli_mac_arm64", "arduino-cli")
+    } else if cfg!(target_arch = "aarch64") {
+        ("arduino-cli_linux_arm64", "arduino-cli")
     } else {
         ("arduino-cli_linux_64bit", "arduino-cli")
     };
