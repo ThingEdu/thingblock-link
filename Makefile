@@ -38,7 +38,7 @@ help: ## List available targets
 		| awk 'BEGIN {FS = ":.*?## "} {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
 dev run: ## Run the helper locally (debug build + debug logs)
-	RUST_BACKTRACE=1 RUST_LOG=$(RUST_LOG) $(CARGO) run -- --resource-root $(RESOURCE_ROOT)
+	RUST_BACKTRACE=1 RUST_LOG=$(RUST_LOG) $(CARGO) run --bin thingblock-link-cloud -- --resource-root $(RESOURCE_ROOT)
 
 build: ## Native release build
 	$(CARGO) build --release
