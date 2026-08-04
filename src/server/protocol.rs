@@ -122,6 +122,29 @@ pub struct LibRef {
 pub struct Artifact {
     pub format: String,
     pub path: String,
+    /// Base64 firmware bytes, set by the cloud server whose caller is a browser
+    /// with no access to `path`. Absent for the local helper, which uploads the
+    /// file in place.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
+    /// The separately-addressed images an ESP flash needs (bootloader, partition
+    /// table, boot_app0, app). Empty for single-image targets such as AVR, whose
+    /// Intel HEX carries its own addresses.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<ArtifactPart>,
+}
+
+/// One image within an [`Artifact`], flashed at a fixed offset.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactPart {
+    /// Flash offset, e.g. `0x10000` for the app image.
+    pub offset: u32,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub path: String,
+    /// Base64 bytes, filled in by the cloud server (see [`Artifact::data`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
 }
 
 /// Install status of a boards platform (a core such as `esp32:esp32`), as
@@ -157,7 +180,7 @@ pub struct ListBoardsResult {
 }
 
 /// `result` payload for `compile`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompileResult {
     pub artifact: Artifact,

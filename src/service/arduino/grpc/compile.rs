@@ -12,9 +12,10 @@ use std::path::{Path, PathBuf};
 
 use futures::Stream;
 use tonic::Streaming;
+use tracing::warn;
 
 use crate::error::{Error, Result};
-use crate::server::protocol::{Artifact, CompileOptions};
+use crate::server::protocol::{Artifact, ArtifactPart, CompileOptions};
 use crate::service::arduino::grpc::{Client, cli};
 
 /// One translated step of a compile, in the helper's own shapes.
@@ -106,13 +107,15 @@ fn translate(resp: cli::CompileResponse) -> Option<Result<CompileEvent>> {
             },
             percent: progress.percent,
         })),
-        Message::Result(result) => match find_artifact(Path::new(&result.build_path)) {
-            Some(artifact) => Some(Ok(CompileEvent::Done(artifact))),
-            None => Some(Err(Error::Daemon(format!(
-                "compile produced no flashable artifact in {}",
-                result.build_path
-            )))),
-        },
+        Message::Result(result) => {
+            match find_artifact(Path::new(&result.build_path), &result.build_properties) {
+                Some(artifact) => Some(Ok(CompileEvent::Done(artifact))),
+                None => Some(Err(Error::Daemon(format!(
+                    "compile produced no flashable artifact in {}",
+                    result.build_path
+                )))),
+            }
+        }
     }
 }
 
@@ -122,16 +125,71 @@ fn translate(resp: cli::CompileResponse) -> Option<Result<CompileEvent>> {
 ///
 /// The `.ino.<ext>` suffix naturally skips merged variants such as
 /// `*.ino.with_bootloader.hex`, which we don't flash directly.
-pub fn find_artifact(build_path: &Path) -> Option<Artifact> {
+pub fn find_artifact(build_path: &Path, build_properties: &[String]) -> Option<Artifact> {
     for ext in ["hex", "bin"] {
         if let Some(path) = find_binary(build_path, ext) {
+            let parts = if ext == "bin" {
+                esp_parts(build_path, &path, build_properties)
+            } else {
+                Vec::new()
+            };
             return Some(Artifact {
                 format: ext.to_string(),
                 path: path.to_string_lossy().into_owned(),
+                data: None,
+                parts,
             });
         }
     }
     None
+}
+
+/// The four images an ESP flash needs, at the offsets the core's own `merge-bin`
+/// recipe uses. Only the bootloader's offset varies by chip (`0x0` on RISC-V
+/// parts, `0x1000` on the classic ESP32), so it comes from the build properties
+/// rather than a table here; a build missing any image yields no parts at all,
+/// leaving the single-image path intact.
+fn esp_parts(build_path: &Path, app: &Path, build_properties: &[String]) -> Vec<ArtifactPart> {
+    esp_parts_inner(build_path, app, build_properties).unwrap_or_default()
+}
+
+fn esp_parts_inner(
+    build_path: &Path,
+    app: &Path,
+    build_properties: &[String],
+) -> Option<Vec<ArtifactPart>> {
+    let stem = app
+        .file_name()
+        .and_then(|n| n.to_str())?
+        .trim_end_matches(".bin");
+    let bootloader_addr = build_properties
+        .iter()
+        .find_map(|p| p.strip_prefix("build.bootloader_addr="))
+        .and_then(|v| u32::from_str_radix(v.trim().trim_start_matches("0x"), 16).ok())?;
+
+    let images = [
+        (
+            bootloader_addr,
+            build_path.join(format!("{stem}.bootloader.bin")),
+        ),
+        (0x8000, build_path.join(format!("{stem}.partitions.bin"))),
+        (0xe000, build_path.join("boot_app0.bin")),
+        (0x10000, app.to_path_buf()),
+    ];
+    if images.iter().any(|(_, path)| !path.is_file()) {
+        warn!(build = %build_path.display(), "esp build is missing an image; flashing the app alone");
+        return None;
+    }
+    Some(
+        images
+            .into_iter()
+            .map(|(offset, path)| ArtifactPart {
+                offset,
+                path: path.to_string_lossy().into_owned(),
+                data: None,
+            })
+            .collect(),
+    )
 }
 
 /// First file in `dir` whose name ends with `.ino.<ext>`.

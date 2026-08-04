@@ -49,6 +49,28 @@ impl From<btleplug::Error> for Error {
     }
 }
 
+/// Renders the same `{code, message}` body as the WS terminal `error`, so the
+/// cloud server's HTTP callers parse one error shape across both faces.
+impl axum::response::IntoResponse for Error {
+    fn into_response(self) -> axum::response::Response {
+        use axum::http::StatusCode;
+
+        let status = match self {
+            // The root is validated at startup, so a resource error here is a
+            // bad `{pack, lib}` reference from the caller.
+            Error::InvalidRequest(_) | Error::Resource(_) => StatusCode::BAD_REQUEST,
+            Error::Cancelled => StatusCode::from_u16(499).expect("valid status"),
+            Error::Daemon(_) | Error::Grpc(_) => StatusCode::BAD_GATEWAY,
+            Error::Ble(_) | Error::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        let body = axum::Json(serde_json::json!({
+            "code": self.code(),
+            "message": self.to_string(),
+        }));
+        (status, body).into_response()
+    }
+}
+
 impl Error {
     /// Stable wire code for the WS `error {code, message}` terminal message.
     pub fn code(&self) -> &'static str {
