@@ -1,0 +1,8 @@
+# Statically link the MSVC C runtime on Windows. Rust links it dynamically by
+# default, so the binary needs the VC++ 2015-2022 redistributable installed —
+# which a clean Windows machine does not have, and an older redist only half
+# satisfies (it ships VCRUNTIME140.dll but not VCRUNTIME140_1.dll, the C++
+# exception-handling half added in VS2019). Statically linking makes the helper
+# self-contained. Safe here because this crate only produces an .exe.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]
