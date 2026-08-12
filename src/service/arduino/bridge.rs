@@ -367,7 +367,7 @@ async fn run_compile(
 /// The cancellable compile pump. Materializes the sketch, opens the stream, and
 /// translates each event into a WS response until a terminal one is sent.
 #[allow(clippy::too_many_arguments)]
-async fn compile_stream(
+pub async fn compile_stream(
     daemon: &Daemon,
     responder: &Responder,
     temp_base: &TempDir,
