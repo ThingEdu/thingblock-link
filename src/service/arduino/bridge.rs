@@ -191,6 +191,9 @@ pub async fn dispatch(
                 port,
                 upload_speed,
                 artifact,
+                // An ordinary upload's artifact already lives in arduino-cli's own temp build dir
+                // (see `run_compile`/`compile_stream`), so there is nothing to stage.
+                None,
             ));
         }
         // Same pump as `upload`, differing only in where the image comes from: the resource root
@@ -205,9 +208,20 @@ pub async fn dispatch(
             let path = session
                 .resource_root()
                 .resolve_firmware_file(&pack, &file)?;
+            // Stage a copy outside the resource root before handing arduino-cli the path — see
+            // `stage_firmware_image`'s doc for why flashing must never write into the pack's own
+            // directory. `Artifact` carries only `.path` here (the wire shape is unused for a
+            // helper-resolved image); it stays `Artifact` rather than a bare path because
+            // `run_upload`'s signature is shared with `upload`, whose artifact really does arrive
+            // over the wire with the other fields populated.
+            let staged = stage_firmware_image(&path)?;
+            let staged_path = staged.path().join(
+                path.file_name()
+                    .expect("resolve_firmware_file returns a file path"),
+            );
             let artifact = Artifact {
                 format: "bin".into(),
-                path: path.to_string_lossy().into_owned(),
+                path: staged_path.to_string_lossy().into_owned(),
                 data: None,
                 parts: Vec::new(),
             };
@@ -229,6 +243,9 @@ pub async fn dispatch(
                 port,
                 upload_speed,
                 artifact,
+                // Held until the upload finishes: dropping it earlier would remove the staged copy
+                // (and arduino-cli's `*_flashed.bin` siblings alongside it) mid-flash.
+                Some(staged),
             ));
         }
         // Open the bidirectional monitor stream, confirm the port opened, then keep
@@ -479,6 +496,10 @@ async fn run_upload(
     port: String,
     upload_speed: u32,
     artifact: Artifact,
+    // `flashFirmware`'s staged copy (see `stage_firmware_image`), kept alive for the whole flash so
+    // it (and arduino-cli's `*_flashed.bin` siblings) is removed only once the upload is done.
+    // `None` for an ordinary `upload`, whose artifact needs no staging.
+    _firmware_temp: Option<TempDir>,
 ) {
     let id = responder.id().to_string();
     upload_stream(
@@ -492,6 +513,34 @@ async fn run_upload(
     )
     .await;
     in_flight.lock().expect("in_flight mutex").remove(&id);
+}
+
+/// Copy a resolved firmware image and its siblings (bootloader, partition table) into a fresh temp
+/// directory, so `flashFirmware` never points arduino-cli straight at a file inside the resource
+/// root. arduino-cli/esptool write `*_flashed.bin` siblings next to whatever they flash (observed on
+/// hardware: `telemetrix-ble.ino_flashed.bin`, `.bootloader_flashed.bin`, `.partitions_flashed.bin`,
+/// and `boot_app0_flashed.bin`, which does not even come from the pack). Left pointed at the pack's
+/// own directory, that write fails outright on an install directory that is not user-writable —
+/// exactly the stuck state this feature exists to remove — and on macOS it lands inside the `.app`
+/// bundle and invalidates its signature.
+///
+/// The whole containing directory is copied, not just the named image, because arduino-cli's esp32
+/// upload recipe finds the bootloader and partition table by name next to the app image.
+pub fn stage_firmware_image(image: &Path) -> Result<TempDir> {
+    let src_dir = image.parent().ok_or_else(|| {
+        Error::Resource(format!(
+            "firmware image {} has no containing directory",
+            image.display()
+        ))
+    })?;
+    let staged = TempDir::new("thingblock-link-firmware")?;
+    for entry in std::fs::read_dir(src_dir)? {
+        let entry = entry?;
+        if entry.file_type()?.is_file() {
+            std::fs::copy(entry.path(), staged.path().join(entry.file_name()))?;
+        }
+    }
+    Ok(staged)
 }
 
 /// The cancellable upload pump. Opens the stream and translates each event into a

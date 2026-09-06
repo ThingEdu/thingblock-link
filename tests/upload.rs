@@ -10,6 +10,10 @@
 //! synchronously. That needs a live WS session, so this file also carries the
 //! same session-standup/round-trip harness `connect.rs`/`ws.rs` use (no shared
 //! `tests/common` module exists yet, so it's inlined here per that idiom).
+//!
+//! And `stage_firmware_image`, which copies a resolved firmware image (and its siblings) out of
+//! the resource root before `flashFirmware` points arduino-cli at it — see the module doc on
+//! `bridge::stage_firmware_image` for why flashing must never write into the pack's own directory.
 
 use std::fs;
 use std::net::Ipv4Addr;
@@ -18,6 +22,7 @@ use std::sync::Arc;
 use futures::{SinkExt, StreamExt};
 use serde_json::json;
 use thingblock_link::server;
+use thingblock_link::service::arduino::bridge::stage_firmware_image;
 use thingblock_link::service::arduino::daemon::Daemon;
 use thingblock_link::service::arduino::grpc::cli;
 use thingblock_link::service::arduino::grpc::upload::build_request;
@@ -173,4 +178,65 @@ fn nonzero_upload_speed_overrides_via_property() {
         921600,
     );
     assert_eq!(req.upload_properties, ["upload.speed=921600"]);
+}
+
+/// `stage_firmware_image` copies the app image's whole containing directory (the app image plus its
+/// bootloader/partition-table siblings, which arduino-cli's esp32 upload recipe finds by name next to
+/// it) into a fresh temp directory, so `flashFirmware` never points arduino-cli at a file inside the
+/// resource root. arduino-cli/esptool write `*_flashed.bin` siblings next to whatever they flash; if
+/// that were still the pack's own directory (as shipped inside an installed app), a restore would
+/// litter or fail to write into the install directory. Proven here by making the source directory
+/// read-only before staging: on a real install that directory is exactly as unwritable, and staging
+/// must still succeed because it only reads from there.
+#[test]
+fn stage_firmware_image_copies_the_image_set_out_of_a_read_only_source() {
+    let src = TempDir::new("thingblock-link-stage-src").expect("temp dir");
+    let pack = src.path().join("firmware/telemetrix-ble");
+    fs::create_dir_all(&pack).expect("create pack dir");
+    fs::write(pack.join("telemetrix-ble.ino.bin"), b"app-image").expect("write app image");
+    fs::write(
+        pack.join("telemetrix-ble.ino.bootloader.bin"),
+        b"bootloader",
+    )
+    .expect("write bootloader");
+    fs::write(
+        pack.join("telemetrix-ble.ino.partitions.bin"),
+        b"partitions",
+    )
+    .expect("write partitions");
+
+    // Simulate a read-only install directory: staging must still succeed, since it only reads here.
+    let mut perms = fs::metadata(&pack).expect("pack metadata").permissions();
+    perms.set_readonly(true);
+    fs::set_permissions(&pack, perms).expect("make pack dir read-only");
+
+    let image = pack.join("telemetrix-ble.ino.bin");
+    let result = stage_firmware_image(&image);
+
+    // Restore write access before any assertion can panic, so the TempDir guards can still clean up.
+    let mut perms = fs::metadata(&pack).expect("pack metadata").permissions();
+    #[allow(clippy::permissions_set_readonly_false)]
+    perms.set_readonly(false);
+    fs::set_permissions(&pack, perms).expect("restore pack dir permissions");
+
+    let staged = result.expect("staging a read-only source succeeds");
+    assert_ne!(
+        staged.path(),
+        pack.as_path(),
+        "the copy lives in its own temp dir, not the source directory"
+    );
+    assert_eq!(
+        fs::read(staged.path().join("telemetrix-ble.ino.bin")).expect("read staged app image"),
+        b"app-image"
+    );
+    assert_eq!(
+        fs::read(staged.path().join("telemetrix-ble.ino.bootloader.bin"))
+            .expect("read staged bootloader"),
+        b"bootloader"
+    );
+    assert_eq!(
+        fs::read(staged.path().join("telemetrix-ble.ino.partitions.bin"))
+            .expect("read staged partitions"),
+        b"partitions"
+    );
 }

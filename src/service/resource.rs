@@ -14,6 +14,12 @@
 //! reads in place. That consumer *is* a local process, so it uses the path
 //! directly — the asymmetry that makes Flow 1 an HTTP serve and Flow 2 a
 //! filesystem read of the same root.
+//!
+//! Flow 3 (firmware): [`ResourceRoot::resolve_firmware_file`] turns a browser-supplied
+//! `{pack, file}` reference into a pack-shipped firmware image for `flashFirmware`, the same
+//! local-filesystem-read shape as Flow 2. Unlike Flow 2's directory, the resolved file is never
+//! read in place — the bridge stages a copy of it elsewhere before flashing, since arduino-cli's
+//! upload writes sibling files next to whatever it flashes and this directory must stay read-only.
 
 use std::path::{Path, PathBuf};
 
