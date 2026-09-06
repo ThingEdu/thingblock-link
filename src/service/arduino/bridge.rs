@@ -193,6 +193,44 @@ pub async fn dispatch(
                 artifact,
             ));
         }
+        // Same pump as `upload`, differing only in where the image comes from: the resource root
+        // rather than the artifact a compile just produced.
+        RequestBody::FlashFirmware {
+            fqbn,
+            port,
+            upload_speed,
+            pack,
+            file,
+        } => {
+            let path = session
+                .resource_root()
+                .resolve_firmware_file(&pack, &file)?;
+            let artifact = Artifact {
+                format: "bin".into(),
+                path: path.to_string_lossy().into_owned(),
+                data: None,
+                parts: Vec::new(),
+            };
+
+            let in_flight = session.in_flight();
+            let token = CancellationToken::new();
+            in_flight
+                .lock()
+                .expect("in_flight mutex")
+                .insert(id.to_string(), token.clone());
+            debug!(id, %fqbn, %port, %pack, %file, "flashFirmware: spawning");
+
+            tokio::spawn(run_upload(
+                session.daemon(),
+                responder.clone(),
+                in_flight,
+                token,
+                fqbn,
+                port,
+                upload_speed,
+                artifact,
+            ));
+        }
         // Open the bidirectional monitor stream, confirm the port opened, then keep
         // a pump task streaming `monitorData` under *this* (the open) request's id.
         // The session owns the live monitor; `monitorWrite`/`monitorClose` reach it
