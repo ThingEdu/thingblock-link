@@ -135,3 +135,29 @@ async fn traversal_outside_the_root_is_refused() {
         resp.body
     );
 }
+
+#[tokio::test]
+async fn serves_pack_file_with_revalidating_cache_control() {
+    let (addr, _guard) = serve_resources(
+        "extensions/peripheral/thingbot-core/blocks.js",
+        "export const registerBlocks = () => {};",
+    )
+    .await;
+
+    let resp = http_get(
+        addr,
+        "/resources/extensions/peripheral/thingbot-core/blocks.js",
+        None,
+    )
+    .await;
+
+    assert_eq!(resp.status, 200, "pack file should be served");
+    // With no directive a browser falls back to heuristic freshness — a tenth of the file's age by
+    // `Last-Modified` — so a month-old pack file stays "fresh" for days and a deployed pack update
+    // never reaches the editor, even across a restart.
+    assert!(
+        resp.headers.contains("cache-control: no-cache"),
+        "pack files must be revalidated on every load; headers:\n{}",
+        resp.headers
+    );
+}
