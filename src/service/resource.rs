@@ -14,6 +14,22 @@
 //! reads in place. That consumer *is* a local process, so it uses the path
 //! directly — the asymmetry that makes Flow 1 an HTTP serve and Flow 2 a
 //! filesystem read of the same root.
+//!
+//! Flow 3 (firmware): [`ResourceRoot::resolve_firmware_file`] turns a browser-supplied
+//! `{pack, file}` reference into a pack-shipped firmware image for `flashFirmware`, the same
+//! local-filesystem-read shape as Flow 2. Unlike Flow 2's directory, the resolved file is never
+//! read in place — the bridge stages a copy of it elsewhere before flashing, since arduino-cli's
+//! upload writes sibling files next to whatever it flashes and this directory must stay read-only.
+//!
+//! Windows note: `Path::canonicalize()` returns an extended-length "verbatim" path
+//! (`\\?\C:\...`) on Windows. That form is safe (indeed required, to defeat symlink games) for
+//! `starts_with` containment checks and for our own `std::fs` calls, but arduino-cli — a separate
+//! Go process reached over gRPC — is handed the path as plain text (`library` for Flow 2,
+//! `import_file` for Flow 3) and does not understand the `\\?\` prefix, so a verbatim path there
+//! reads as simply not found. Flows 2 and 3 therefore strip the prefix from the value they hand
+//! back with `dunce::simplified`, *after* the canonical form has done its containment-check duty.
+//! Flow 1's root is never turned into a string for an external consumer — `ServeDir` reads it
+//! with `std::fs` like we do — so it is left in its canonical form.
 
 use std::path::{Path, PathBuf};
 
@@ -63,6 +79,9 @@ impl ResourceRoot {
     /// traversal that escapes it) and to be a directory. A missing or escaping
     /// reference is an actionable [`Error::Resource`] naming the offending pack
     /// and lib — never a silent miss.
+    ///
+    /// The containment check runs on the canonical path; only the value handed back is
+    /// de-verbatim'd (see the module doc), so this is not a weaker check.
     pub fn resolve_lib_dir(&self, pack: &str, lib: &str) -> Result<PathBuf> {
         let dir = self
             .root
@@ -80,6 +99,34 @@ impl ResourceRoot {
                 "lib {pack}/{lib} is not a directory"
             )));
         }
-        Ok(dir)
+        Ok(dunce::simplified(&dir).to_path_buf())
+    }
+
+    /// Resolve a prebuilt firmware image a device pack ships, for `flashFirmware`. The same
+    /// containment rule as `resolve_lib_dir`: canonicalize, then refuse anything that leaves the
+    /// root — the pack and file both come from the browser. Resolves to a file rather than a
+    /// directory because arduino-cli's `import_file` names the app image, and reads its siblings
+    /// (bootloader, partition table) from the same directory by name.
+    ///
+    /// The containment check runs on the canonical path; only the value handed back is
+    /// de-verbatim'd (see the module doc), so this is not a weaker check.
+    pub fn resolve_firmware_file(&self, pack: &str, file: &str) -> Result<PathBuf> {
+        let path = self
+            .root
+            .join(pack)
+            .join(file)
+            .canonicalize()
+            .map_err(|e| Error::Resource(format!("firmware {pack}/{file} is unreadable: {e}")))?;
+        if !path.starts_with(&self.root) {
+            return Err(Error::Resource(format!(
+                "firmware {pack}/{file} escapes the resource root"
+            )));
+        }
+        if !path.is_file() {
+            return Err(Error::Resource(format!(
+                "firmware {pack}/{file} is not a file"
+            )));
+        }
+        Ok(dunce::simplified(&path).to_path_buf())
     }
 }

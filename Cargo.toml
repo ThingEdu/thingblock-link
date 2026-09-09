@@ -15,6 +15,7 @@ axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"
 btleplug = "0.11"
 clap = { version = "4", features = ["derive"] }
+dunce = "1"
 futures = "0.3"
 image = { version = "0.25", default-features = false, features = ["png"] }
 prost = "0.14"
@@ -27,7 +28,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 tonic = "0.14"
 tonic-prost = "0.14"
-tower-http = { version = "0.6", features = ["cors", "fs", "limit"] }
+tower-http = { version = "0.6", features = ["cors", "fs", "limit", "set-header"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tray-icon = "0.24"
