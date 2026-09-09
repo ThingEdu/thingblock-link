@@ -46,9 +46,31 @@ fn resolve_lib_dir_resolves_a_vendored_dir() {
         .expect("existing lib dir resolves");
 
     assert!(resolved.is_absolute());
-    assert!(resolved.starts_with(root.path()));
-    assert_eq!(resolved, lib.canonicalize().unwrap());
+    // `resolved` is the de-verbatim'd (outward) form on Windows, so compare containment and
+    // identity on the canonical form both sides agree on rather than the raw `PathBuf`s — this
+    // is the "still resolves to the same directory, still inside the root" check, not a
+    // containment check itself (that lives in `resolve_lib_dir` and runs on the canonical path
+    // before the value is simplified).
+    let resolved_canonical = resolved.canonicalize().expect("resolved dir still exists");
+    assert!(resolved_canonical.starts_with(root.path()));
+    assert_eq!(resolved_canonical, lib.canonicalize().unwrap());
+    assert_no_verbatim_prefix(&resolved);
 }
+
+/// On Windows, `\\?\`-prefixed paths pass every `std::fs`/`Path` API fine but are rejected by
+/// non-Rust consumers (arduino-cli, a separate Go process) as "not found". This only exercises
+/// on the Windows CI runner — see the module doc for why macOS/Linux never produce this prefix.
+#[cfg(windows)]
+fn assert_no_verbatim_prefix(path: &std::path::Path) {
+    assert!(
+        !path.as_os_str().to_string_lossy().starts_with(r"\\?\"),
+        "path handed to an external consumer must not be a verbatim path: {}",
+        path.display()
+    );
+}
+
+#[cfg(not(windows))]
+fn assert_no_verbatim_prefix(_path: &std::path::Path) {}
 
 #[test]
 fn resolve_lib_dir_rejects_a_missing_ref() {
@@ -101,7 +123,18 @@ fn resolve_firmware_file_returns_a_file_inside_the_root() {
         .expect("firmware should resolve");
 
     assert!(resolved.is_file(), "resolves to the image file");
-    assert!(resolved.starts_with(root.path()), "stays under the root");
+    // Same rationale as `resolve_lib_dir_resolves_a_vendored_dir`: compare containment on the
+    // canonical form, since `resolved` itself is the de-verbatim'd outward value.
+    let resolved_canonical = resolved.canonicalize().expect("resolved file still exists");
+    assert!(
+        resolved_canonical.starts_with(root.path()),
+        "stays under the root"
+    );
+    assert_eq!(
+        resolved_canonical,
+        pack.join("telemetrix-ble.ino.bin").canonicalize().unwrap()
+    );
+    assert_no_verbatim_prefix(&resolved);
 }
 
 #[test]
