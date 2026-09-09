@@ -14,6 +14,12 @@
 //! reads in place. That consumer *is* a local process, so it uses the path
 //! directly — the asymmetry that makes Flow 1 an HTTP serve and Flow 2 a
 //! filesystem read of the same root.
+//!
+//! Flow 3 (firmware): [`ResourceRoot::resolve_firmware_file`] turns a browser-supplied
+//! `{pack, file}` reference into a pack-shipped firmware image for `flashFirmware`, the same
+//! local-filesystem-read shape as Flow 2. Unlike Flow 2's directory, the resolved file is never
+//! read in place — the bridge stages a copy of it elsewhere before flashing, since arduino-cli's
+//! upload writes sibling files next to whatever it flashes and this directory must stay read-only.
 
 use std::path::{Path, PathBuf};
 
@@ -81,5 +87,30 @@ impl ResourceRoot {
             )));
         }
         Ok(dir)
+    }
+
+    /// Resolve a prebuilt firmware image a device pack ships, for `flashFirmware`. The same
+    /// containment rule as `resolve_lib_dir`: canonicalize, then refuse anything that leaves the
+    /// root — the pack and file both come from the browser. Resolves to a file rather than a
+    /// directory because arduino-cli's `import_file` names the app image, and reads its siblings
+    /// (bootloader, partition table) from the same directory by name.
+    pub fn resolve_firmware_file(&self, pack: &str, file: &str) -> Result<PathBuf> {
+        let path = self
+            .root
+            .join(pack)
+            .join(file)
+            .canonicalize()
+            .map_err(|e| Error::Resource(format!("firmware {pack}/{file} is unreadable: {e}")))?;
+        if !path.starts_with(&self.root) {
+            return Err(Error::Resource(format!(
+                "firmware {pack}/{file} escapes the resource root"
+            )));
+        }
+        if !path.is_file() {
+            return Err(Error::Resource(format!(
+                "firmware {pack}/{file} is not a file"
+            )));
+        }
+        Ok(path)
     }
 }

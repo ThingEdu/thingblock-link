@@ -24,8 +24,8 @@ self-contained process for the user to run.
 ## Status
 
 The WS pipe and the daemon handshake are in place, along with `listBoards`,
-`connect`, `disconnect`, `compile`, `upload`, `installPlatform`, `cancel`, and the
-serial `monitor*` family. Every request type is now implemented. Each row in the
+`connect`, `disconnect`, `compile`, `upload`, `flashFirmware`, `installPlatform`,
+`cancel`, and the serial `monitor*` family. Every request type is now implemented. Each row in the
 [reference](#websocket-protocol-reference) is tagged with its status. One-shot
 reads live on a small [HTTP API](#http-api) sharing the same listener.
 
@@ -144,6 +144,39 @@ session's selected port, and replies `result {}`; it does **not** round-trip to 
 daemon, so actual port existence surfaces later at upload/monitor time.
 `disconnect {}` clears the selected port (and, once `monitor` lands, closes any open
 monitor stream) and replies `result {}`.
+
+### `flashFirmware`
+
+Flashes a prebuilt firmware image a device pack ships, skipping compile — for
+restoring a board to its stock live-mode firmware. `pack` and `file` are resolved
+against the served resource root the same way `compile`'s `libs` are (canonicalize,
+then refuse anything outside the root with `error{resource}`) before anything is
+spawned; the browser cannot name a helper filesystem path directly, which is why
+this does not reuse `upload`'s `artifact`. `uploadSpeed` is the same optional
+`upload.speed` override `upload` takes (`0` defers to the FQBN's `boards.txt`). The
+stream and terminal reply are identical to `upload`'s — `log` chunks, then
+`result {}` or `error`. Cancellable via `cancel`.
+
+**Request**
+
+```json
+{
+  "id": "1", "type": "flashFirmware",
+  "payload": {
+    "fqbn": "esp32:esp32:esp32c3",
+    "port": "/dev/ttyUSB0",
+    "uploadSpeed": 921600,
+    "pack": "extensions/devices/thingbot",
+    "file": "firmware/telemetrix-ble/telemetrix-ble.ino.bin"
+  }
+}
+```
+
+**Reply**
+
+```json
+{ "id": "1", "type": "result", "payload": {} }
+```
 
 ### `installPlatform`
 
