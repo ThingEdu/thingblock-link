@@ -87,21 +87,6 @@ Every message — in both directions — is:
 reply (`result` or `error`). Field names are camelCase. Unsolicited helper messages
 (`event`) carry their own `id`.
 
-### Client → helper
-
-| `type` | `payload` | terminal reply | status |
-| - | - | - | - |
-| `listBoards` | `{ pnpid: string[] }` | `result { targets: ConnectionTarget[] }` | ✅ implemented |
-| `connect` | `{ port: string }` | `result {}` | ✅ implemented |
-| `disconnect` | `{}` | `result {}` | ✅ implemented |
-| `compile` | `{ fqbn, options, source, libs }` | `result { artifact }` (after `log`/`progress`) | ✅ implemented |
-| `upload` | `{ fqbn, port, uploadSpeed, artifact }` | `result {}` (after `log`) | ✅ implemented |
-| `monitorOpen` | `{ port, baudRate }` | `result {}` then async `monitorData` | ✅ implemented |
-| `monitorWrite` | `{ data }` | — | ✅ implemented |
-| `monitorClose` | `{}` | `result {}` | ✅ implemented |
-| `installPlatform` | `{ platform, version? }` | `result {}` (after `log`/`progress`) | ✅ implemented |
-| `cancel` | `{}` (targets the request `id`) | `error { code: "cancelled" }` on the cancelled request | ✅ implemented |
-
 ### Helper → client
 
 | `type` | `payload` | meaning |
@@ -223,5 +208,4 @@ Stack: `tokio`, `tonic` / `prost`, `axum`, `serde`, `tracing`, `clap`,
 
 ## License
 
-Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0). See
-[`LICENSE`](LICENSE) for the full text.
+Licensed under the MIT License. See [`LICENSE`](LICENSE) for the full text.
