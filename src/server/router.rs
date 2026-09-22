@@ -10,11 +10,13 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::ws::WebSocket;
 use axum::extract::{State, WebSocketUpgrade};
+use axum::http::{HeaderValue, header};
 use axum::response::Response;
 use axum::routing::{any, get};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
+use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::{info, warn};
 
 use crate::error::Result;
@@ -79,7 +81,20 @@ pub async fn serve(
             "/io",
             any(move |ws: WebSocketUpgrade| crate::service::ble::upgrade(ws, ble.clone())),
         )
-        .nest_service("/resources", ServeDir::new(resource_root.path()))
+        .nest(
+            "/resources",
+            // Pack files are replaced in place whenever a pack is redeployed, under URLs that never
+            // change. With no directive a browser falls back to heuristic freshness — a fraction of
+            // the file's `Last-Modified` age — so a pack that has sat here for a month stays "fresh"
+            // for days and a redeploy never reaches the editor, restart or not. `no-cache` keeps the
+            // cache but forces revalidation, which `ServeDir`'s `Last-Modified` answers with a 304.
+            Router::new()
+                .fallback_service(ServeDir::new(resource_root.path()))
+                .layer(SetResponseHeaderLayer::overriding(
+                    header::CACHE_CONTROL,
+                    HeaderValue::from_static("no-cache"),
+                )),
+        )
         // Routes must be registered before this layer to inherit CORS/PNA.
         .layer(cors)
         .with_state(AppState {
