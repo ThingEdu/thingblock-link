@@ -1,5 +1,3 @@
-//! `POST /compile` controller.
-
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::Json;
@@ -43,8 +41,7 @@ pub async fn compile(
     State(state): State<AppState>,
     Json(req): Json<CompileRequest>,
 ) -> Result<Response> {
-    // Before streaming starts, so a bad ref is a 400 rather than an in-band
-    // error after the headers are sent.
+    // Resolve before streaming so a bad ref is a 400, not an in-band error after headers.
     let lib_dirs = req
         .libs
         .iter()
@@ -79,9 +76,7 @@ pub async fn compile(
         .into_response())
 }
 
-/// One JSON object per line, without the request `id` — one compile per
-/// connection leaves nothing to correlate. The drop guard rides in the stream
-/// state so an aborted request cancels the compile.
+// No request `id` (one compile per connection); the guard in stream state cancels on abort.
 fn ndjson(
     rx: mpsc::Receiver<thingblock_link::server::protocol::Response>,
     guard: DropGuard,

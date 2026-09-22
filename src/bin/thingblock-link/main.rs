@@ -1,7 +1,3 @@
-//! thingblock-link binary entry point — a thin wrapper over the crate library
-//! (see `lib.rs`). Builds the tokio runtime and hands the main thread to the
-//! tray UI, which owns startup (daemon + WS server) and the tao event loop.
-
 mod ui;
 
 #[cfg(test)]
@@ -13,8 +9,7 @@ use clap::Parser;
 use thingblock_link::error::Result;
 use ui::tray;
 
-/// WS port the editor connects to. A contract detail with the editor; override
-/// with `--port` until the two sides are pinned together.
+/// WS port the editor connects to; a contract with the editor.
 const DEFAULT_WS_PORT: u16 = 3030;
 
 #[derive(Parser)]
@@ -27,29 +22,19 @@ struct Args {
     #[arg(long, default_value_t = DEFAULT_WS_PORT)]
     port: u16,
 
-    /// Directory of resource packs to serve and resolve compile libs from.
-    /// Defaults to `thingblock-resource` next to the executable, which is how the
-    /// packaged app ships it; pass `--resource-root ./thingblock-resource` to run
-    /// against the in-repo folder during development.
+    /// Resource pack directory to serve and compile against [default: `thingblock-resource` beside the exe].
     #[arg(long)]
     resource_root: Option<PathBuf>,
 
-    /// Path to the `arduino-cli` binary to run. Packaged builds pass the binary
-    /// bundled beside the host app; when omitted, the in-tree
-    /// `arduino-cli-binaries/` copy is used so `cargo run` works during development.
+    /// Path to the `arduino-cli` binary [default: in-tree `arduino-cli-binaries/` copy].
     #[arg(long)]
     arduino_cli: Option<PathBuf>,
 
-    /// Directory holding `arduino-cli.yaml` and the `data/` bundle the daemon
-    /// runs against. Packaged builds pass the install dir; when omitted, the
-    /// crate root is used so `cargo run` works during development.
+    /// Directory holding `arduino-cli.yaml` and the daemon's `data/` bundle [default: crate root].
     #[arg(long)]
     config_dir: Option<PathBuf>,
 }
 
-/// The packaged default: a `thingblock-resource` directory laid down beside the
-/// binary in the install dir. Falls back to a CWD-relative path if the
-/// executable location is somehow unavailable.
 fn default_resource_root() -> PathBuf {
     std::env::current_exe()
         .ok()
@@ -72,9 +57,7 @@ fn main() -> Result<()> {
         .config_dir
         .unwrap_or_else(thingblock_link::service::arduino::daemon::default_config_dir);
 
-    // The tray (and tao's event loop) must own the main thread, so run the
-    // daemon + WS server on a runtime and hand control to the tray UI, which
-    // never returns — the process exits from within its loop on Quit.
+    // tao's event loop must own the main thread; tray::run never returns (exits on Quit).
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;

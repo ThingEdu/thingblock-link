@@ -1,5 +1,3 @@
-//! Composition root: shared state, route table, middleware stack.
-
 use std::sync::Arc;
 
 use axum::Router;
@@ -15,11 +13,9 @@ use tracing::info;
 
 use crate::handler::{compile, health};
 
-/// Caps the untrusted sketch payload. Generated sources are kilobytes.
 const MAX_COMPILE_BODY: usize = 1024 * 1024;
 
-/// Per-caller context (tenant, quota, auth subject) belongs in a request
-/// extension set by middleware, not here.
+/// Per-caller context (tenant, quota, auth) belongs in a middleware-set request extension.
 #[derive(Clone)]
 pub struct AppState {
     pub daemon: Arc<Daemon>,

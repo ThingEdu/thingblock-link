@@ -1,7 +1,4 @@
-//! The status window's payloads are serialized straight into `evaluate_script`
-//! calls (`window.__status(<json>)` / `window.__telemetry(<json>)`), so the JSON
-//! shape is a contract with `assets/status.html`. These pin the field names and
-//! the status discriminant strings the page switches on.
+//! Pins the JSON shape contract with `assets/status.html`.
 
 use crate::ui::window::{StatusView, Telemetry};
 
