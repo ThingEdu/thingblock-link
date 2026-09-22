@@ -1,3 +1,6 @@
+//! Per-connection state and the read → dispatch → write loop for one browser socket. Holds the
+//! selected port (the daemon itself is connectionless) and in-flight ids backing `cancel{id}`.
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -19,26 +22,36 @@ use crate::service::arduino::grpc::monitor::MonitorCommand;
 use crate::service::resource::ResourceRoot;
 use crate::utils::tempdir::TempDir;
 
+/// How many responses may queue toward the socket before backpressure applies.
 const RESPONSE_CHANNEL_CAPACITY: usize = 64;
 
+/// How long streamed-text chunks accumulate before the writer flushes a coalesced frame, capping
+/// a flood of tiny chunks at one frame per window per stream.
 const BATCH_COOLDOWN: Duration = Duration::from_millis(100);
 
-/// Never hold the lock across `.await`.
+/// Cancellation tokens by in-flight request id, shared so spawned tasks can deregister while
+/// `cancel` fires concurrently. Never hold the lock across `.await`.
 pub type InFlight = Arc<Mutex<HashMap<String, CancellationToken>>>;
 
-/// Dropping `cmd_tx` ends the outbound stream, which winds `task` down.
+/// An open serial monitor, kept in the [`Session`] because it spans `monitorOpen`/`Write`/`Close`.
+/// `task` pumps serial into `monitorData`; dropping `cmd_tx` ends the stream and winds it down.
 pub struct MonitorSession {
     pub cmd_tx: mpsc::Sender<MonitorCommand>,
     pub task: JoinHandle<()>,
 }
 
+/// State for one browser WS connection.
 pub struct Session {
     daemon: Arc<Daemon>,
+    /// Lets `compile` resolve a `{pack, lib}` reference to a local library dir for the daemon.
     resource_root: Arc<ResourceRoot>,
+    /// The port chosen via `connect`, opaque to the JS side.
     selected_port: Option<String>,
     in_flight: InFlight,
-    /// Session-scoped: a compiled artifact must survive until a later `upload` reads it.
+    /// Scratch dir for sketches and artifacts, created on first `compile`. Session-scoped because
+    /// a compiled artifact must survive until a later `upload` reads it.
     temp_base: Option<Arc<TempDir>>,
+    /// At most one per session (one board).
     monitor: Option<MonitorSession>,
 }
 
@@ -66,6 +79,8 @@ impl Session {
         self.in_flight.clone()
     }
 
+    /// The session scratch dir, created on first use. The directory is removed once the session
+    /// and every in-flight compile have dropped their `Arc`.
     pub fn ensure_temp_base(&mut self) -> Result<Arc<TempDir>> {
         if self.temp_base.is_none() {
             self.temp_base = Some(Arc::new(TempDir::new("thingblock-link")?));
@@ -85,6 +100,7 @@ impl Session {
         self.monitor.is_some()
     }
 
+    /// Installs the monitor opened by `monitorOpen`; the bridge rejects a re-open while one is up.
     pub fn set_monitor(&mut self, monitor: MonitorSession) {
         self.monitor = Some(monitor);
     }
@@ -93,6 +109,8 @@ impl Session {
         self.monitor.as_ref().map(|m| m.cmd_tx.clone())
     }
 
+    /// Closes the open monitor, if any: asks the daemon to close the port gracefully, then drops
+    /// `cmd_tx` so the pump winds down. Best-effort; a closed channel or finished task is fine.
     pub async fn close_monitor(&mut self) {
         if let Some(monitor) = self.monitor.take() {
             let _ = monitor.cmd_tx.send(MonitorCommand::Close).await;
@@ -101,15 +119,20 @@ impl Session {
         }
     }
 
+    /// Drives the connection until the socket closes: a writer task pumps queued responses to the
+    /// sink while this loop reads and dispatches requests.
     pub async fn run(mut self, socket: WebSocket) {
         let (mut sink, mut stream) = socket.split();
         let (tx, mut rx) = mpsc::channel::<Response>(RESPONSE_CHANNEL_CAPACITY);
 
+        // Streamed text is buffered and coalesced per `id` over a `BATCH_COOLDOWN` window, armed by
+        // `flush_at`; other messages flush the buffer first to keep order, then send promptly.
         let writer = tokio::spawn(async move {
             let mut buf: Vec<Response> = Vec::new();
             let mut flush_at: Option<Instant> = None;
 
             loop {
+                // Pends forever until a buffered chunk arms `flush_at`.
                 let tick = async {
                     match flush_at {
                         Some(at) => tokio::time::sleep_until(at).await,
@@ -126,6 +149,7 @@ impl Session {
                         flush_at = None;
                     }
                     message = rx.recv() => match message {
+                        // All senders dropped (session teardown): flush and finish.
                         None => {
                             flush(&mut sink, &mut buf).await;
                             break;
@@ -134,7 +158,7 @@ impl Session {
                             push_coalesced(&mut buf, response);
                             flush_at.get_or_insert_with(|| Instant::now() + BATCH_COOLDOWN);
                         }
-                        // Flush buffered text first to preserve order.
+                        // Terminal/progress/event: flush buffered text first to preserve order.
                         Some(response) => {
                             if !flush(&mut sink, &mut buf).await {
                                 break;
@@ -161,20 +185,25 @@ impl Session {
             match message {
                 Message::Text(text) => self.handle_text(text.as_str(), &tx).await,
                 Message::Close(_) => break,
+                // The protocol has no binary/ping/pong messages.
                 Message::Binary(_) | Message::Ping(_) | Message::Pong(_) => {}
             }
         }
 
-        // Release the port, and cancel compiles so they drop their `Arc<TempDir>` instead of finishing.
+        // Browser gone: close the monitor to release the port, and cancel in-flight compiles so
+        // they wind down and drop their `Arc<TempDir>` rather than running to completion.
         self.close_monitor().await;
         for (_, token) in self.in_flight.lock().expect("in_flight mutex").drain() {
             token.cancel();
         }
 
+        // Dropping `tx` ends the writer task, which closes the sink.
         drop(tx);
         let _ = writer.await;
     }
 
+    /// Parses one text frame as a request envelope and dispatches it, replying with an `error`
+    /// on a malformed envelope or a failed request.
     async fn handle_text(&mut self, text: &str, tx: &mpsc::Sender<Response>) {
         let request: Request = match serde_json::from_str(text) {
             Ok(request) => request,
@@ -207,7 +236,8 @@ impl Session {
     }
 }
 
-/// Returns `false` once the socket is closed; a serialization failure is logged and skipped.
+/// Serializes and sends one response, returning `false` once the socket is closed. A serialization
+/// failure is a bug in our response types: logged and skipped, leaving the socket usable.
 async fn send_response(sink: &mut SplitSink<WebSocket, Message>, response: &Response) -> bool {
     match serde_json::to_string(response) {
         Ok(json) => sink.send(Message::Text(json.into())).await.is_ok(),
@@ -218,6 +248,8 @@ async fn send_response(sink: &mut SplitSink<WebSocket, Message>, response: &Resp
     }
 }
 
+/// Drains the coalesced buffer to the socket in order. Returns `false` if the socket closes
+/// mid-flush, dropping any unsent responses with it.
 async fn flush(sink: &mut SplitSink<WebSocket, Message>, buf: &mut Vec<Response>) -> bool {
     for response in buf.drain(..) {
         if !send_response(sink, &response).await {

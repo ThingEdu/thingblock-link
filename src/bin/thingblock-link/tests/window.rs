@@ -1,4 +1,5 @@
-//! Pins the JSON shape contract with `assets/status.html`.
+//! Pins the status window's JSON payloads, which go straight into `evaluate_script` and are
+//! a contract with `assets/status.html` (field names and the `state` strings it switches on).
 
 use crate::ui::window::{StatusView, Telemetry};
 

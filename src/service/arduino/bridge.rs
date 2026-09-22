@@ -1,4 +1,5 @@
-//! The only place the WS and arduino-cli schemas meet; neither leaks past it.
+//! Translates WS requests into arduino-cli gRPC calls and streams results back as responses.
+//! The only place the WS and arduino-cli schemas meet, so neither leaks past it.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -20,8 +21,12 @@ use crate::service::arduino::grpc::platform::PlatformInstallEvent;
 use crate::service::arduino::grpc::upload::UploadEvent;
 use crate::utils::tempdir::TempDir;
 
+/// How many outbound monitor commands (writes/close) may queue before backpressure applies.
+/// Editor serial writes are small and infrequent, so this stays small.
 const MONITOR_COMMAND_CAPACITY: usize = 32;
 
+/// Sends one request's responses to the session's writer, stamping each with the request `id`.
+/// Cloneable so a streaming handler can emit many `log`/`progress` before its terminal reply.
 #[derive(Clone)]
 pub struct Responder {
     id: String,
@@ -37,6 +42,8 @@ impl Responder {
         &self.id
     }
 
+    /// Sends one response body for this request. A closed channel means the browser is gone,
+    /// which is not actionable here, so it is logged and dropped.
     pub async fn send(&self, body: ResponseBody) {
         let response = Response {
             id: self.id.clone(),
@@ -47,6 +54,7 @@ impl Responder {
         }
     }
 
+    /// Sends a terminal `error` built from an [`Error`]'s code and message.
     async fn send_error(&self, error: &Error) {
         self.send(ResponseBody::Error {
             code: error.code().into(),
@@ -56,7 +64,8 @@ impl Responder {
     }
 }
 
-/// `Err` becomes a terminal `error`; handlers that own their terminal reply return `Ok`.
+/// Routes one request to its gRPC translation, streaming responses back through `responder`.
+/// Each request gets exactly one terminal: return `Err` (caller sends `error`) or send it + `Ok`.
 pub async fn dispatch(
     session: &mut Session,
     body: RequestBody,
@@ -75,7 +84,8 @@ pub async fn dispatch(
                 ))
                 .await;
         }
-        // The daemon is connectionless per-port, so `connect` only records the port.
+        // The daemon is connectionless per-port, so `connect` only records the chosen port;
+        // whether it exists is checked later by upload/monitor.
         RequestBody::Connect { port } => {
             if port.is_empty() {
                 return Err(Error::InvalidRequest(
@@ -89,6 +99,7 @@ pub async fn dispatch(
                 .await;
         }
         RequestBody::Disconnect {} => {
+            // Close any open monitor first so the port is released before it is cleared.
             session.close_monitor().await;
             debug!(id, "disconnect: cleared selected port");
             session.clear_port();
@@ -96,7 +107,8 @@ pub async fn dispatch(
                 .send(ResponseBody::Result(serde_json::json!({})))
                 .await;
         }
-        // Spawned so the read loop stays responsive to `cancel`; the task owns its terminal.
+        // Long-running and cancellable: spawned so the read loop stays responsive to `cancel`.
+        // The spawned task owns the terminal reply.
         RequestBody::Compile {
             fqbn,
             options,
@@ -105,7 +117,8 @@ pub async fn dispatch(
         } => {
             let opts: CompileOptions = serde_json::from_value(options)
                 .map_err(|e| Error::InvalidRequest(format!("compile options: {e}")))?;
-            // Resolve lib refs before registering the task so a bad ref fails fast.
+            // Resolve vendored lib refs against the served root before registering the task,
+            // so a bad ref fails fast as `error{resource}` instead of spawning a doomed compile.
             let resource_root = session.resource_root();
             let lib_dirs = libs
                 .iter()
@@ -132,7 +145,8 @@ pub async fn dispatch(
                 lib_dirs,
             ));
         }
-        // Per the protocol, `cancel`'s envelope `id` is the in-flight request's id.
+        // Per the protocol, `cancel`'s envelope `id` is the in-flight request's id. Firing its
+        // token makes that task emit the terminal `error{cancelled}`.
         RequestBody::Cancel {} => {
             if let Some(token) = session.in_flight().lock().expect("in_flight mutex").get(id) {
                 debug!(id, "cancel: signalling in-flight request");
@@ -141,6 +155,7 @@ pub async fn dispatch(
                 debug!(id, "cancel: no in-flight request for id");
             }
         }
+        // Spawned like `compile` so it stays cancellable; the task owns the terminal reply.
         RequestBody::Upload {
             fqbn,
             port,
@@ -164,9 +179,11 @@ pub async fn dispatch(
                 port,
                 upload_speed,
                 artifact,
+                // A compiled artifact already lives in arduino-cli's temp build dir: no staging.
                 None,
             ));
         }
+        // Same pump as `upload`, but the image comes from the resource root, not a compile.
         RequestBody::FlashFirmware {
             fqbn,
             port,
@@ -177,7 +194,8 @@ pub async fn dispatch(
             let path = session
                 .resource_root()
                 .resolve_firmware_file(&pack, &file)?;
-            // Staged so arduino-cli never writes into the pack's directory (see `stage_firmware_image`).
+            // Stage a copy so arduino-cli never writes into the pack's directory (see
+            // `stage_firmware_image`). Only `.path` matters; `Artifact` is shared with `upload`.
             let staged = stage_firmware_image(&path)?;
             let staged_path = staged.path().join(
                 path.file_name()
@@ -207,10 +225,12 @@ pub async fn dispatch(
                 port,
                 upload_speed,
                 artifact,
-                // Dropping it before the upload finishes would delete the image mid-flash.
+                // Held until the upload finishes: dropping it earlier would delete the staged copy
+                // (and arduino-cli's `*_flashed.bin` siblings) mid-flash.
                 Some(staged),
             ));
         }
+        // Opens the serial monitor; its `monitorData` streams under this open request's id.
         // `monitorWrite`/`monitorClose` reach the monitor via session state, not by request id.
         RequestBody::MonitorOpen { port, baud_rate } => {
             if session.has_monitor() {
@@ -220,7 +240,8 @@ pub async fn dispatch(
             }
             open_monitor(session, responder, &port, baud_rate).await?;
         }
-        // No reply, per the protocol.
+        // Pushes serial bytes into the open monitor; no reply, per the protocol.
+        // A send failure means the monitor just closed.
         RequestBody::MonitorWrite { data } => {
             let Some(cmd_tx) = session.monitor_cmd_tx() else {
                 return Err(Error::InvalidRequest(
@@ -235,6 +256,7 @@ pub async fn dispatch(
                 warn!(id, "monitorWrite dropped: monitor stream closed");
             }
         }
+        // Idempotent: closing when no monitor is open still replies `result {}`.
         RequestBody::MonitorClose {} => {
             session.close_monitor().await;
             debug!(id, "monitorClose: monitor closed");
@@ -242,7 +264,8 @@ pub async fn dispatch(
                 .send(ResponseBody::Result(serde_json::json!({})))
                 .await;
         }
-        // Serialized daemon-wide: an install mutates the shared data dir and ends with a reinit.
+        // Spawned and cancellable like `compile`, but serialized daemon-wide: an install mutates
+        // the shared data dir and ends with a reinit. The owned lock guard rides in the task.
         RequestBody::InstallPlatform { platform, version } => {
             let (package, architecture) = platform
                 .split_once(':')
@@ -283,6 +306,8 @@ pub async fn dispatch(
     Ok(())
 }
 
+/// Opens the monitor stream, confirms the port opened, replies `result {}`, and spawns the pump.
+/// The pump streams `monitorData` under the open request's id for the monitor's lifetime.
 async fn open_monitor(
     session: &mut Session,
     responder: &Responder,
@@ -293,8 +318,10 @@ async fn open_monitor(
     let (cmd_tx, cmd_rx) = mpsc::channel::<MonitorCommand>(MONITOR_COMMAND_CAPACITY);
 
     let mut client = session.daemon().client();
+    // Heap-pinned so the stream can move into the pump task after the open handshake.
     let mut stream = Box::pin(client.monitor(port, baud_rate, cmd_rx).await?);
 
+    // The first event confirms the port opened, or reports why it didn't.
     match stream.next().await {
         Some(Ok(MonitorEvent::Opened)) => {}
         Some(Ok(MonitorEvent::Error(message))) => return Err(Error::Daemon(message)),
@@ -320,6 +347,7 @@ async fn open_monitor(
     Ok(())
 }
 
+/// Forwards inbound monitor data as `monitorData`; a port error ends it with a terminal `error`.
 /// A clean stream end is silent: `monitorClose` already sent the `result {}`.
 async fn monitor_pump(
     mut stream: impl futures::Stream<Item = Result<MonitorEvent>> + Unpin,
@@ -330,6 +358,7 @@ async fn monitor_pump(
             Ok(MonitorEvent::Data(data)) => {
                 responder.send(ResponseBody::MonitorData { data }).await;
             }
+            // A duplicate `Opened` after the port is up is benign, not fatal.
             Ok(MonitorEvent::Opened) => {}
             Ok(MonitorEvent::Error(message)) => {
                 return responder.send_error(&Error::Daemon(message)).await;
@@ -339,6 +368,8 @@ async fn monitor_pump(
     }
 }
 
+/// Runs one spawned `compile` to its terminal reply, then deregisters it from `in_flight`
+/// so a later `cancel` for this id finds nothing.
 #[allow(clippy::too_many_arguments)]
 async fn run_compile(
     daemon: Arc<Daemon>,
@@ -359,6 +390,8 @@ async fn run_compile(
     in_flight.lock().expect("in_flight mutex").remove(&id);
 }
 
+/// Writes the sketch, runs the compile stream, and translates each event into a WS response.
+/// Sends exactly one terminal: `result`, `error`, or `error{cancelled}`.
 #[allow(clippy::too_many_arguments)]
 pub async fn compile_stream(
     daemon: &Daemon,
@@ -409,6 +442,7 @@ pub async fn compile_stream(
                         .await;
                 }
                 Some(Err(e)) => return responder.send_error(&e).await,
+                // Stream ended without a `Done`: no artifact was produced.
                 None => {
                     return responder
                         .send_error(&Error::Daemon(
@@ -421,6 +455,8 @@ pub async fn compile_stream(
     }
 }
 
+/// Runs one spawned `upload`/`flashFirmware` to its terminal reply, then deregisters it
+/// from `in_flight` so a later `cancel` for this id finds nothing.
 #[allow(clippy::too_many_arguments)]
 async fn run_upload(
     daemon: Arc<Daemon>,
@@ -431,7 +467,7 @@ async fn run_upload(
     port: String,
     upload_speed: u32,
     artifact: Artifact,
-    // Keeps `flashFirmware`'s staged copy alive until the flash completes.
+    // Keeps `flashFirmware`'s staged copy alive until the flash completes; `None` for `upload`.
     _firmware_temp: Option<TempDir>,
 ) {
     let id = responder.id().to_string();
@@ -448,7 +484,8 @@ async fn run_upload(
     in_flight.lock().expect("in_flight mutex").remove(&id);
 }
 
-/// esptool writes `*_flashed.bin` beside its inputs (read-only install dir, signed macOS `.app`); copies siblings too.
+/// Copies the image's dir (esp32 needs bootloader/partitions beside it) to a temp dir; esptool
+/// writes `*_flashed.bin` beside inputs: fails on read-only installs, breaks signed macOS `.app`s.
 pub fn stage_firmware_image(image: &Path) -> Result<TempDir> {
     let src_dir = image.parent().ok_or_else(|| {
         Error::Resource(format!(
@@ -466,6 +503,8 @@ pub fn stage_firmware_image(image: &Path) -> Result<TempDir> {
     Ok(staged)
 }
 
+/// Runs the upload stream and translates each event into a WS response until a terminal one.
+/// Upload has no structured progress, so only `log` chunks precede the terminal `result`.
 #[allow(clippy::too_many_arguments)]
 async fn upload_stream(
     daemon: &Daemon,
@@ -507,6 +546,7 @@ async fn upload_stream(
                         .await;
                 }
                 Some(Err(e)) => return responder.send_error(&e).await,
+                // Stream ended without a `Done`: the flash did not complete.
                 None => {
                     return responder
                         .send_error(&Error::Daemon(
@@ -519,6 +559,8 @@ async fn upload_stream(
     }
 }
 
+/// Runs one spawned `installPlatform` to its terminal reply, holding the daemon-wide install
+/// guard throughout, then deregisters it from `in_flight`.
 #[allow(clippy::too_many_arguments)]
 async fn run_install(
     daemon: Arc<Daemon>,
@@ -543,7 +585,8 @@ async fn run_install(
     in_flight.lock().expect("in_flight mutex").remove(&id);
 }
 
-/// On success, reinit the daemon first: it doesn't see the new core until `Init` re-runs.
+/// Runs the install stream, translating events into WS responses. On success it reinits the
+/// daemon before replying: the new core is invisible until `Init` re-runs, so compiles would fail.
 async fn install_stream(
     daemon: &Daemon,
     responder: &Responder,
@@ -591,6 +634,7 @@ async fn install_stream(
                     };
                 }
                 Some(Err(e)) => return responder.send_error(&e).await,
+                // Stream ended without a `Done`: the install did not complete.
                 None => {
                     return responder
                         .send_error(&Error::Daemon(
@@ -603,7 +647,8 @@ async fn install_stream(
     }
 }
 
-/// arduino-cli compiles a sketch directory whose main `.ino` shares the folder's name.
+/// Writes `source` as `<base>/<name>/<name>.ino`, keyed by request id. arduino-cli compiles a
+/// sketch directory whose main `.ino` must share the folder's name.
 fn write_sketch(base: &Path, id: &str, source: &str) -> Result<PathBuf> {
     let name = sketch_name(id);
     let dir = base.join(&name);
@@ -612,7 +657,8 @@ fn write_sketch(base: &Path, id: &str, source: &str) -> Result<PathBuf> {
     Ok(dir)
 }
 
-/// The `sketch_` prefix guards against ids that are empty or lead with a digit.
+/// Builds a filesystem-safe sketch folder name from a request id. The `sketch_` prefix guards
+/// against ids that are empty or lead with a digit.
 fn sketch_name(id: &str) -> String {
     let safe: String = id
         .chars()

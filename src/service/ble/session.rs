@@ -1,4 +1,5 @@
-//! Unlike the flash session, no coalescing: BLE frames are discrete and each goes out on its own.
+//! Per-connection state and the read→dispatch→write loop for one `/io` socket. No coalescing,
+//! unlike the flash session: BLE frames are discrete, so each goes out as its own frame, in order.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -20,18 +21,24 @@ use crate::service::ble::protocol::{
 };
 use crate::service::ble::transport::{Ble, Conn};
 
-/// Matches the flash channel's per-connection capacity.
+/// Outbound responses queued toward the socket before backpressure; matches the flash channel.
 const RESPONSE_CHANNEL_CAPACITY: usize = 64;
 
+/// Pending peripheral-disconnect events before the relay backpressures; small, as they're rare.
 const DISCONNECT_CHANNEL_CAPACITY: usize = 16;
 
+/// State for one browser `/io` WS connection.
 pub struct BleSession {
+    /// The shared adapter, or `None` without a radio, in which case every BLE request fails.
     ble: Option<Arc<Ble>>,
+    /// Live connections this session holds open, keyed by device id.
     connected: HashMap<String, Conn>,
+    /// Each connected device's notification-pump task, keyed by device id.
     pumps: HashMap<String, JoinHandle<()>>,
-    /// Keyed by the starting request's id, which `cancel` targets.
+    /// In-flight scans keyed by the starting request's id, so `cancel {id}` can stop the right one.
     scans: HashMap<String, CancellationToken>,
-    /// Started lazily on the first `connect`; shared by every connection.
+    /// Session-wide peripheral-disconnect relay, started lazily on the first `connect` and
+    /// shared by every connection.
     disconnect_watch: Option<JoinHandle<()>>,
 }
 
@@ -46,10 +53,13 @@ impl BleSession {
         }
     }
 
+    /// Drives the connection until the socket closes: a writer task sends queued responses while
+    /// this loop dispatches requests and handles peripheral disconnects relayed from the watch.
     pub async fn run(mut self, socket: WebSocket) {
         let (mut sink, mut stream) = socket.split();
         let (tx, mut rx) = mpsc::channel::<BleResponse>(RESPONSE_CHANNEL_CAPACITY);
-        // The watch task only relays ids; this loop is the sole mutator of `connected`/`pumps`.
+        // The watch task only relays ids; this loop is the sole mutator of `connected`/`pumps`,
+        // so it does the bookkeeping and framing.
         let (disconnect_tx, mut disconnect_rx) =
             mpsc::channel::<String>(DISCONNECT_CHANNEL_CAPACITY);
 
@@ -62,7 +72,8 @@ impl BleSession {
                         }
                     }
                     Err(e) => {
-                        // A serialization failure is our bug, not the client's; keep the socket usable.
+                        // A serialization failure is a bug in our response types, not the
+                        // client's; log it and keep the socket usable.
                         warn!(error = %e, "failed to serialize io response");
                     }
                 }
@@ -86,6 +97,7 @@ impl BleSession {
                             self.handle_text(text.as_str(), &tx, &disconnect_tx).await;
                         }
                         Message::Close(_) => break,
+                        // The protocol has no binary/ping/pong messages; ignore them.
                         Message::Binary(_) | Message::Ping(_) | Message::Pong(_) => {}
                     }
                 }
@@ -102,6 +114,8 @@ impl BleSession {
         let _ = writer.await;
     }
 
+    /// Parses one text frame as an `/io` request and dispatches it; any failure is sent back
+    /// as a terminal `error` for that request.
     async fn handle_text(
         &mut self,
         text: &str,
@@ -141,6 +155,8 @@ impl BleSession {
         }
     }
 
+    /// Routes one request body to its handler. Every arm needs the adapter, so with none
+    /// available every request fails uniformly.
     async fn dispatch(
         &mut self,
         body: BleRequestBody,
@@ -216,7 +232,8 @@ impl BleSession {
         }
     }
 
-    /// The spawned task owns the scan's terminal reply, so this returns once it's launched.
+    /// Starts a scan in a spawned task that streams hits and owns the terminal reply (`Result`
+    /// once cancelled, `Error` if it never starts), so this returns once it's launched.
     async fn handle_scan(
         &mut self,
         ble: Arc<Ble>,
@@ -279,7 +296,8 @@ impl BleSession {
                                     .await;
                             }
                             None => {
-                                // The adapter stopped the scan itself; release it and still send a terminal reply.
+                                // The adapter stopped the scan itself; release our generation
+                                // and still owe the client a terminal reply.
                                 debug!(id = %responder.id(), generation, "ble scan ended by adapter");
                                 let _ = scan_ble.release_scan(generation).await;
                                 responder.send(BleResponseBody::Result(json!({}))).await;
@@ -294,6 +312,7 @@ impl BleSession {
         Ok(())
     }
 
+    /// Cancels the scan whose request id this `cancel` targets; a no-op if it already ended.
     /// Removed here, not in the scan task, to keep `scans` mutation on the dispatch path.
     fn handle_cancel(&mut self, responder: &Responder) {
         debug!(id = %responder.id(), "ble cancel requested");
@@ -302,6 +321,8 @@ impl BleSession {
         }
     }
 
+    /// Connects to a peripheral and spawns its notification pump; the first successful connect
+    /// also starts the session's disconnect watch.
     async fn handle_connect(
         &mut self,
         ble: Arc<Ble>,
@@ -337,7 +358,7 @@ impl BleSession {
 
         self.connected.insert(device_id.clone(), conn);
         if let Some(old_pump) = self.pumps.insert(device_id.clone(), pump) {
-            // A reconnect under the same id orphaned the still-running old pump; drop it.
+            // A reconnect under the same id orphaned the still-running old pump; stop it.
             old_pump.abort();
         }
 
@@ -352,7 +373,7 @@ impl BleSession {
         Ok(())
     }
 
-    /// Safe to call for an unknown or already-disconnected id.
+    /// Disconnects a device this session holds open; safe for an unknown or already-gone id.
     async fn handle_disconnect(&mut self, device_id: String, responder: &Responder) -> Result<()> {
         debug!(id = %responder.id(), %device_id, "ble disconnect requested");
         if let Some(pump) = self.pumps.remove(&device_id) {
@@ -450,7 +471,8 @@ impl BleSession {
             .ok_or_else(|| Error::Ble(format!("device {device_id} is not connected")))
     }
 
-    /// Disconnect events are adapter-wide, so ids this session never connected are ignored.
+    /// Handles a relayed disconnect: drops the device's bookkeeping and tells the browser. Events
+    /// are adapter-wide, so ids this session never connected are ignored.
     async fn handle_peripheral_disconnect(
         &mut self,
         device_id: String,
@@ -473,6 +495,7 @@ impl BleSession {
         }
     }
 
+    /// Stops every background task and live connection before the socket closes for good.
     async fn teardown(&mut self) {
         if let Some(watch) = self.disconnect_watch.take() {
             watch.abort();
@@ -480,7 +503,8 @@ impl BleSession {
         for (_, pump) in self.pumps.drain() {
             pump.abort();
         }
-        // Scan tasks release their own generation; stopping the adapter here could kill another session's scan.
+        // Cancelling is enough: each scan task releases its own generation, and stopping the
+        // adapter here could kill a newer scan owned by another session.
         for (_, token) in self.scans.drain() {
             token.cancel();
         }
@@ -490,11 +514,13 @@ impl BleSession {
     }
 }
 
+/// Parses a wire UUID, mapping a bad value onto the same `Error::Ble` as other BLE failures.
 fn parse_uuid(s: &str) -> Result<Uuid> {
     Uuid::parse_str(s).map_err(|e| Error::Ble(format!("invalid uuid {s}: {e}")))
 }
 
-/// The event stream is adapter-wide, so one watch per session covers every device it connects.
+/// Spawns the task relaying adapter peripheral disconnects into `run`'s loop. The event stream
+/// is adapter-wide, so one watch per session covers every device it connects.
 fn spawn_disconnect_watch(ble: Arc<Ble>, disconnect_tx: mpsc::Sender<String>) -> JoinHandle<()> {
     tokio::spawn(async move {
         let events = match ble.disconnect_events().await {

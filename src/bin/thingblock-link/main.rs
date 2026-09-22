@@ -1,3 +1,6 @@
+//! Entry point for the local helper: builds the tokio runtime, then hands the main thread
+//! to the tray UI, which owns startup (daemon + WS server) and the tao event loop.
+
 mod ui;
 
 #[cfg(test)]
@@ -9,7 +12,7 @@ use clap::Parser;
 use thingblock_link::error::Result;
 use ui::tray;
 
-/// WS port the editor connects to; a contract with the editor.
+/// WS port the editor connects to; a contract with the editor, overridable with `--port`.
 const DEFAULT_WS_PORT: u16 = 3030;
 
 #[derive(Parser)]
@@ -22,7 +25,7 @@ struct Args {
     #[arg(long, default_value_t = DEFAULT_WS_PORT)]
     port: u16,
 
-    /// Resource pack directory to serve and compile against [default: `thingblock-resource` beside the exe].
+    /// Resource pack directory to serve [default: `thingblock-resource` beside the exe].
     #[arg(long)]
     resource_root: Option<PathBuf>,
 
@@ -30,11 +33,13 @@ struct Args {
     #[arg(long)]
     arduino_cli: Option<PathBuf>,
 
-    /// Directory holding `arduino-cli.yaml` and the daemon's `data/` bundle [default: crate root].
+    /// Directory with `arduino-cli.yaml` and the daemon's `data/` bundle [default: crate root].
     #[arg(long)]
     config_dir: Option<PathBuf>,
 }
 
+/// Packaged default: `thingblock-resource` beside the binary in the install dir.
+/// Falls back to a CWD-relative path if the executable location is unavailable.
 fn default_resource_root() -> PathBuf {
     std::env::current_exe()
         .ok()
@@ -57,7 +62,8 @@ fn main() -> Result<()> {
         .config_dir
         .unwrap_or_else(thingblock_link::service::arduino::daemon::default_config_dir);
 
-    // tao's event loop must own the main thread; tray::run never returns (exits on Quit).
+    // tao's event loop must own the main thread, so services run on this runtime and the
+    // tray takes over; `tray::run` never returns, the process exits from its loop on Quit.
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;

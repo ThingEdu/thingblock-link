@@ -1,3 +1,6 @@
+//! Board-manager translations: `PlatformSearch` backs the HTTP `/api/platforms` status routes,
+//! `PlatformInstall` backs WS `installPlatform`, which downloads a core (e.g. `esp32:esp32`).
+
 use futures::Stream;
 use tonic::Streaming;
 
@@ -5,6 +8,7 @@ use crate::error::{Error, Result};
 use crate::server::protocol::PlatformStatus;
 use crate::service::arduino::grpc::{Client, cli};
 
+/// One translated step of a platform install, in the helper's own shapes.
 #[derive(Debug)]
 pub enum PlatformInstallEvent {
     Log(String),
@@ -17,7 +21,8 @@ pub enum PlatformInstallEvent {
 }
 
 impl Client {
-    /// An empty `query` matches all platforms.
+    /// Searches the package indexes for platforms matching `query` (empty matches all),
+    /// each with its install status.
     pub async fn platform_search(&mut self, query: &str) -> Result<Vec<PlatformStatus>> {
         let instance = *self.instance();
         let response = self
@@ -33,6 +38,7 @@ impl Client {
         Ok(response.search_output.into_iter().map(to_status).collect())
     }
 
+    /// Installs a platform (download, extract, post-install), streaming translated events.
     /// An empty `version` means the latest indexed release.
     pub async fn platform_install(
         &mut self,
@@ -56,6 +62,8 @@ impl Client {
     }
 }
 
+/// Maps a `PlatformSummary` to [`PlatformStatus`]. The display name lives on a release,
+/// so it prefers the latest, then the installed one, then the id.
 fn to_status(summary: cli::PlatformSummary) -> PlatformStatus {
     let metadata = summary.metadata.unwrap_or_default();
     let name = summary
@@ -79,6 +87,7 @@ fn non_empty(value: String) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
+/// Adapts the tonic `PlatformInstall` stream into events, ending after the first error.
 /// `phase` carries the download label across `Update` frames, which don't repeat it.
 fn into_events(
     stream: Streaming<cli::PlatformInstallResponse>,
@@ -105,6 +114,7 @@ fn into_events(
     )
 }
 
+/// Maps one `PlatformInstallResponse` to an event, or `None` if nothing is worth surfacing.
 fn translate(
     resp: cli::PlatformInstallResponse,
     phase: &mut String,
@@ -114,6 +124,7 @@ fn translate(
     match resp.message? {
         Message::Progress(download) => translate_download(download.message?, phase),
         Message::TaskProgress(task) => Some(Ok(PlatformInstallEvent::Progress {
+            // `name` is the stage label; fall back to the freeform `message`.
             phase: if task.name.is_empty() {
                 task.message
             } else {
@@ -125,6 +136,8 @@ fn translate(
     }
 }
 
+/// Maps one download-progress frame. A failed download is the install's error;
+/// a finished one becomes a log line for the editor's details view.
 fn translate_download(
     message: cli::download_progress::Message,
     phase: &mut String,
@@ -145,6 +158,7 @@ fn translate_download(
                 percent: 100.0 * update.downloaded as f32 / update.total_size as f32,
             }))
         }
+        // Unknown total size: no meaningful percentage to report.
         Message::Update(_) => None,
         Message::End(end) if end.success => (!end.message.is_empty())
             .then(|| Ok(PlatformInstallEvent::Log(format!("{}\n", end.message)))),

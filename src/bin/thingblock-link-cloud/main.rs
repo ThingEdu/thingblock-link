@@ -1,3 +1,5 @@
+//! Entry point for `thingblock-link-cloud`, the public compile server.
+
 mod handler;
 mod routes;
 
@@ -31,6 +33,8 @@ struct Args {
     config_dir: Option<PathBuf>,
 }
 
+/// Bundled default: `thingblock-resource` beside the binary in the image.
+/// Falls back to a CWD-relative path if the executable location is unavailable.
 fn default_resource_root() -> PathBuf {
     std::env::current_exe()
         .ok()

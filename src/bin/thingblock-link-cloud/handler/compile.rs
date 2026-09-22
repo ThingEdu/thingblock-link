@@ -1,3 +1,5 @@
+//! `POST /compile`: compiles a sketch and streams progress and the result as NDJSON.
+
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::Json;
@@ -20,12 +22,14 @@ use crate::routes::AppState;
 
 const RESPONSE_CHANNEL_CAPACITY: usize = 64;
 
-/// Distinguishes concurrent compiles in the logs; never leaves the process.
+/// Generates an internal request id to tell concurrent compiles apart in the logs;
+/// never leaves the process.
 fn next_request_id() -> String {
     static SEQ: AtomicU64 = AtomicU64::new(0);
     format!("compile-{}", SEQ.fetch_add(1, Ordering::Relaxed))
 }
 
+/// `POST /compile` JSON body; `libs` are pack refs resolved against the resource root.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompileRequest {
@@ -37,6 +41,8 @@ pub struct CompileRequest {
     libs: Vec<LibRef>,
 }
 
+/// Starts the compile on a background task and streams its responses as NDJSON.
+/// Dropping the response body (client abort) cancels the compile.
 pub async fn compile(
     State(state): State<AppState>,
     Json(req): Json<CompileRequest>,
@@ -76,7 +82,8 @@ pub async fn compile(
         .into_response())
 }
 
-// No request `id` (one compile per connection); the guard in stream state cancels on abort.
+/// Streams responses as one JSON object per line, without the request `id` (one compile
+/// per connection). The drop guard rides in the stream state so an abort cancels the compile.
 fn ndjson(
     rx: mpsc::Receiver<thingblock_link::server::protocol::Response>,
     guard: DropGuard,
@@ -89,7 +96,8 @@ fn ndjson(
     })
 }
 
-/// A browser can't read the server's filesystem, so ship bytes, not a path.
+/// Replaces artifact paths in a compile result with base64 bytes; other bodies pass through.
+/// A browser can't read the server's filesystem, so it needs bytes, not a path.
 fn with_artifact_bytes(body: ResponseBody) -> ResponseBody {
     let ResponseBody::Result(value) = &body else {
         return body;

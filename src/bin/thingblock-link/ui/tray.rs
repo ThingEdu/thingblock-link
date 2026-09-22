@@ -1,3 +1,6 @@
+//! System-tray status/quit UI and the helper's main-thread event loop. The async side
+//! (daemon + WS server) talks to the loop only through its `EventLoopProxy`.
+
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -16,8 +19,10 @@ use thingblock_link::server;
 use thingblock_link::service::arduino::daemon::Daemon;
 use thingblock_link::service::resource::ResourceRoot;
 
+/// How often the status window's board-count / health rows are refreshed.
 const TELEMETRY_INTERVAL: Duration = Duration::from_secs(3);
 
+/// What the tray reports about the helper's lifecycle.
 enum Status {
     Starting,
     Running(u16),
@@ -25,6 +30,7 @@ enum Status {
 }
 
 impl Status {
+    /// Text for the disabled status line in the tray menu.
     fn label(&self) -> String {
         match self {
             Status::Starting => "Starting…".into(),
@@ -33,10 +39,12 @@ impl Status {
         }
     }
 
+    /// Hover tooltip on the tray icon itself.
     fn tooltip(&self) -> String {
         format!("thingblock-link — {}", self.label())
     }
 
+    /// Serializable snapshot of this status for the status window's status row.
     fn view(&self) -> StatusView {
         match self {
             Status::Starting => StatusView {
@@ -58,13 +66,18 @@ impl Status {
     }
 }
 
+/// Events that wake the loop. The async side and menu clicks both funnel through here
+/// so the loop can idle on `ControlFlow::Wait` instead of busy-polling.
 enum UserEvent {
     Status(Status),
     Telemetry(Telemetry),
     MenuClick(MenuId),
+    /// The status window's Quit button, bridged from its IPC channel.
     Quit,
 }
 
+/// Tray handles kept alive for the loop's lifetime: the status item so its text can be
+/// updated, the menu ids to match clicks against.
 struct Tray {
     _icon: TrayIcon,
     status_item: MenuItem,
@@ -72,7 +85,8 @@ struct Tray {
     quit_id: MenuId,
 }
 
-/// Must run on the main thread (tao/tray-icon requirement).
+/// Runs the helper: spawns the services on `runtime`, then drives the tray event loop.
+/// Must be called on the main thread (tao/tray-icon requirement); exits the process on Quit.
 pub fn run(
     runtime: Runtime,
     port: u16,
@@ -83,16 +97,19 @@ pub fn run(
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
+    // Bridge muda's global menu-event channel into the loop as a user event.
     let menu_proxy = proxy.clone();
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
         let _ = menu_proxy.send_event(UserEvent::MenuClick(event.id));
     }));
 
+    // Kept so the status window's Quit button can be wired up when it is lazily built.
     let ipc_proxy = proxy.clone();
 
     let stdin_proxy = proxy.clone();
     runtime.spawn(watch_stdin_for_shutdown(stdin_proxy));
 
+    // Daemon + WS server + telemetry poller; status flows back through the proxy.
     runtime.spawn(run_services(
         port,
         resource_root,
@@ -102,9 +119,12 @@ pub fn run(
     ));
 
     // Tray is built on `Init`: macOS requires icon creation after the loop starts.
+    // `runtime` sits in an Option so Quit can take it exactly once.
     let mut tray: Option<Tray> = None;
     let mut runtime = Some(runtime);
 
+    // Status window is built lazily and hidden on close for instant reopen; the latest
+    // status/telemetry are cached so a freshly built window paints current state at once.
     let mut window: Option<StatusWindow> = None;
     let mut last_status = Status::Starting.view();
     let mut last_telemetry = Telemetry::default();
@@ -160,6 +180,7 @@ pub fn run(
                 window_id,
                 ..
             } if window.as_ref().is_some_and(|w| w.id() == window_id) => {
+                // Closing only hides the window; Quit is the sole path that stops the helper.
                 if let Some(window) = &window {
                     window.hide();
                 }
@@ -169,7 +190,8 @@ pub fn run(
     })
 }
 
-/// Desktop shell's shutdown signal: any stdin activity or EOF; portable, unlike OS signals.
+/// Quits on the desktop shell's shutdown signal: any stdin bytes or EOF. Stdin is portable
+/// (no OS signal is) and, unlike the WS server, can't get stuck behind request handling.
 async fn watch_stdin_for_shutdown(proxy: EventLoopProxy<UserEvent>) {
     use tokio::io::AsyncReadExt;
     let mut buf = [0u8; 64];
@@ -178,7 +200,8 @@ async fn watch_stdin_for_shutdown(proxy: EventLoopProxy<UserEvent>) {
     let _ = proxy.send_event(UserEvent::Quit);
 }
 
-// Dropping the runtime drops the last `Arc<Daemon>`, whose `kill_on_drop` reaps arduino-cli.
+/// Tears down the helper and exits the loop. Dropping the runtime drops the last
+/// `Arc<Daemon>`, whose `kill_on_drop` reaps the arduino-cli daemon.
 fn shutdown(runtime: &mut Option<Runtime>, control_flow: &mut ControlFlow) {
     info!("quit requested; shutting down");
     if let Some(runtime) = runtime.take() {
@@ -187,7 +210,8 @@ fn shutdown(runtime: &mut Option<Runtime>, control_flow: &mut ControlFlow) {
     *control_flow = ControlFlow::Exit;
 }
 
-// On failure this returns but the process stays up so the tray remains usable for Quit.
+/// Starts the daemon and serves the editor over WS, reporting lifecycle to the tray.
+/// On failure it reports `Failed` and returns; the process stays up so Quit still works.
 async fn run_services(
     port: u16,
     resource_root: PathBuf,
@@ -197,6 +221,8 @@ async fn run_services(
 ) {
     let _ = proxy.send_event(UserEvent::Status(Status::Starting));
 
+    // Fail fast on a missing pack dir: it's a packaging error, and the editor can't load
+    // resources or compile vendored libs without it.
     let resource_root = match ResourceRoot::new(&resource_root) {
         Ok(root) => Arc::new(root),
         Err(e) => {
@@ -234,6 +260,8 @@ async fn run_services(
     }
 }
 
+/// Periodically reports connected-board count and daemon health to the status window.
+/// A failed probe means the daemon is unresponsive; a send error means the loop is gone.
 async fn poll_telemetry(daemon: Arc<Daemon>, proxy: EventLoopProxy<UserEvent>) {
     let mut interval = tokio::time::interval(TELEMETRY_INTERVAL);
     loop {
@@ -257,6 +285,8 @@ async fn poll_telemetry(daemon: Arc<Daemon>, proxy: EventLoopProxy<UserEvent>) {
     }
 }
 
+/// Builds the tray icon and menu (status line, separator, Show Status, Quit). Panics on
+/// failure: the OS rejecting the tray is unrecoverable for this UI.
 fn build_tray() -> Tray {
     let status_item = MenuItem::new(Status::Starting.label(), false, None);
     let show_item = MenuItem::new("Show Status", true, None);
@@ -286,6 +316,8 @@ fn build_tray() -> Tray {
     }
 }
 
+/// The ThingBlock chip glyph as RGBA, the base for the per-status [`icon_for`] variants.
+/// Embedded at compile time so the binary stays self-contained.
 fn glyph_rgba() -> image::RgbaImage {
     const PNG: &[u8] = include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -296,7 +328,8 @@ fn glyph_rgba() -> image::RgbaImage {
         .into_rgba8()
 }
 
-// Per-status icon variants are specified in `brand/DESIGN.md`.
+/// Tray icon for a status, a glanceable supplement to the menu line (see `brand/DESIGN.md`):
+/// full color when running, 60% opacity when starting, error dot when failed.
 fn icon_for(status: &Status) -> Icon {
     let mut image = glyph_rgba();
     match status {
@@ -312,6 +345,7 @@ fn icon_for(status: &Status) -> Icon {
     Icon::from_rgba(image.into_raw(), width, height).expect("build tray icon image")
 }
 
+/// Paints the editor's error red as a dot over the pin-1 (top-left) corner.
 fn overlay_error_dot(image: &mut image::RgbaImage) {
     const RED: image::Rgba<u8> = image::Rgba([0xFF, 0x66, 0x1A, 0xFF]);
     const CENTER: i32 = 6;
