@@ -49,6 +49,16 @@ pub enum RequestBody {
         upload_speed: u32,
         artifact: Artifact,
     },
+    /// Flash a prebuilt firmware image a device pack ships, skipping compile. `pack` and `file` are
+    /// resolved under the resource root — the browser cannot name a helper filesystem path, which is
+    /// why this does not reuse `upload`'s `Artifact`.
+    FlashFirmware {
+        fqbn: String,
+        port: String,
+        upload_speed: u32,
+        pack: String,
+        file: String,
+    },
     MonitorOpen {
         port: String,
         baud_rate: u32,

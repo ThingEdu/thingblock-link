@@ -3277,6 +3277,7 @@ dependencies = [
  "base64",
  "btleplug",
  "clap",
+ "dunce",
  "futures",
  "image",
  "prost",
