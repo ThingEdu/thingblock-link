@@ -21,10 +21,10 @@ use tracing::{error, info, warn};
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
-use crate::server;
-use crate::service::arduino::daemon::Daemon;
-use crate::service::resource::ResourceRoot;
 use crate::ui::window::{self, StatusView, StatusWindow, Telemetry};
+use thingblock_link::server;
+use thingblock_link::service::arduino::daemon::Daemon;
+use thingblock_link::service::resource::ResourceRoot;
 
 /// How often the status window's board-count / health rows are refreshed.
 const TELEMETRY_INTERVAL: Duration = Duration::from_secs(3);
@@ -344,7 +344,10 @@ fn build_tray() -> Tray {
 /// safe cross-platform default (see `brand/DESIGN.md`); this is the base the
 /// per-status [`icon_for`] variants are derived from.
 fn glyph_rgba() -> image::RgbaImage {
-    const PNG: &[u8] = include_bytes!("../../brand/icons/icon-32.png");
+    const PNG: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/brand/icons/icon-32.png"
+    ));
     image::load_from_memory(PNG)
         .expect("decode embedded tray icon png")
         .into_rgba8()

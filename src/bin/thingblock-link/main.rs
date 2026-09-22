@@ -2,11 +2,16 @@
 //! (see `lib.rs`). Builds the tokio runtime and hands the main thread to the
 //! tray UI, which owns startup (daemon + WS server) and the tao event loop.
 
+mod ui;
+
+#[cfg(test)]
+mod tests;
+
 use std::path::PathBuf;
 
 use clap::Parser;
 use thingblock_link::error::Result;
-use thingblock_link::ui::tray;
+use ui::tray;
 
 /// WS port the editor connects to. A contract detail with the editor; override
 /// with `--port` until the two sides are pinned together.

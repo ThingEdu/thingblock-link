@@ -145,8 +145,11 @@ fn build_webview(builder: WebViewBuilder<'_>, window: &Window) -> WebView {
 /// initial state so the window paints correctly the instant it loads (before any
 /// live `evaluate_script` update arrives).
 fn render_html(status: &StatusView, telemetry: Telemetry) -> String {
-    const TEMPLATE: &str = include_str!("../../assets/status.html");
-    const GLYPH: &str = include_str!("../../brand/thingblock-icon.svg");
+    const TEMPLATE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/status.html"));
+    const GLYPH: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/brand/thingblock-icon.svg"
+    ));
 
     let status_json = serde_json::to_string(status).expect("serialize initial status");
     let telemetry_json = serde_json::to_string(&telemetry).expect("serialize initial telemetry");

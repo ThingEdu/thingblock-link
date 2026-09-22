@@ -218,7 +218,8 @@ type PlatformStatus = {
 
 ```
 src/
-  main.rs        thin binary: tracing, clap --port, hands main thread to the tray
+  bin/thingblock-link/        local helper: main.rs + ui/ (tray, status window)
+  bin/thingblock-link-cloud/  public compile server
   daemon.rs      spawns/owns arduino-cli daemon, gRPC channel, Create/Init handshake
   grpc.rs, grpc/ generated `pb` module + `Client` wrapper; one submodule per RPC
     board.rs       BoardList -> pnpid filter -> ConnectionTarget[]
@@ -229,8 +230,6 @@ src/
     protocol.rs    serde structs for the JSON envelope (the cross-repo contract)
     api.rs         one-shot HTTP JSON routes (/api/platforms)
   bridge.rs      envelope <-> gRPC translation; the only place the two schemas meet
-  tray.rs        tray-icon status/quit UI + main-thread tao event loop
-  window.rs      wry WebView status window (opened from the tray)
   error.rs
 assets/          status.html — the status window's markup/CSS/JS
 tests/           integration tests (no inline #[cfg(test)] in src/)

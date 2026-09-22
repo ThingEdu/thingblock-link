@@ -18,5 +18,4 @@
 pub mod error;
 pub mod server;
 pub mod service;
-pub mod ui;
 pub mod utils;

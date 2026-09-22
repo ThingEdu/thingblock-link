@@ -3,7 +3,7 @@
 //! shape is a contract with `assets/status.html`. These pin the field names and
 //! the status discriminant strings the page switches on.
 
-use thingblock_link::ui::window::{StatusView, Telemetry};
+use crate::ui::window::{StatusView, Telemetry};
 
 #[test]
 fn running_status_serializes_state_and_port() {
