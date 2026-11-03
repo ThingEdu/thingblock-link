@@ -1,7 +1,8 @@
 //! The axum app: the WS accept loop, the HTTP API, the `/io` BLE channel and the static
 //! `/resources` pack files, all on one listener.
 
-use std::sync::Arc;
+use std::future::Future;
+use std::sync::{Arc, OnceLock};
 
 use axum::Router;
 use axum::extract::ws::WebSocket;
@@ -19,6 +20,7 @@ use crate::error::Result;
 use crate::server::api;
 use crate::server::session::Session;
 use crate::service::arduino::daemon::Daemon;
+use crate::service::ble::transport::Ble;
 use crate::service::resource::ResourceRoot;
 
 /// Shared handles every connection needs: the daemon (gRPC) and the resource root (lib
@@ -36,6 +38,22 @@ pub async fn serve(
     daemon: Arc<Daemon>,
     resource_root: Arc<ResourceRoot>,
 ) -> Result<()> {
+    serve_with_ble(listener, daemon, resource_root, Ble::discover()).await
+}
+
+/// [`serve`] with the BLE adapter coming from `discover`. Discovery runs in the background:
+/// on macOS it blocks until the user answers the Bluetooth permission prompt, and the
+/// resources, compiler and serial faces must not wait on that. `/io` rejects requests until
+/// an adapter is ready.
+pub async fn serve_with_ble<D>(
+    listener: TcpListener,
+    daemon: Arc<Daemon>,
+    resource_root: Arc<ResourceRoot>,
+    discover: D,
+) -> Result<()>
+where
+    D: Future<Output = Result<Option<Ble>>> + Send + 'static,
+{
     // The editor's public origin reaching localhost needs CORS plus Private Network Access, which
     // a bare CORS layer doesn't emit. Origin is mirrored because PNA rejects a wildcard origin.
     let cors = CorsLayer::new()
@@ -44,22 +62,20 @@ pub async fn serve(
         .allow_headers(Any)
         .allow_private_network(true);
 
-    // Discover the BLE adapter for `/io`. A missing radio must not break the rest of the server;
-    // `/io` just rejects every request until one is available.
-    let ble = match crate::service::ble::transport::Ble::discover().await {
-        Ok(Some(b)) => {
-            info!("ble adapter ready");
-            Some(Arc::new(b))
+    // A missing radio must not break the rest of the server; `/io` just rejects every request
+    // until one is available.
+    let ble: Arc<OnceLock<Arc<Ble>>> = Arc::new(OnceLock::new());
+    let slot = ble.clone();
+    tokio::spawn(async move {
+        match discover.await {
+            Ok(Some(b)) => {
+                info!("ble adapter ready");
+                let _ = slot.set(Arc::new(b));
+            }
+            Ok(None) => info!("no ble adapter; /io will reject requests"),
+            Err(e) => warn!(error = %e, "ble init failed; /io disabled"),
         }
-        Ok(None) => {
-            info!("no ble adapter; /io will reject requests");
-            None
-        }
-        Err(e) => {
-            warn!(error = %e, "ble init failed; /io disabled");
-            None
-        }
-    };
+    });
 
     let app = Router::new()
         .route("/", any(ws_handler))
@@ -67,7 +83,7 @@ pub async fn serve(
         .route("/api/platforms/{id}", get(api::platform_status))
         .route(
             "/io",
-            any(move |ws: WebSocketUpgrade| crate::service::ble::upgrade(ws, ble.clone())),
+            any(move |ws: WebSocketUpgrade| crate::service::ble::upgrade(ws, ble.get().cloned())),
         )
         .nest(
             "/resources",
