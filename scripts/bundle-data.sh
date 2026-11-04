@@ -8,7 +8,20 @@
 # makes that work offline-index-wise).
 #
 # Run once per target OS: the installed tools are native binaries.
+#
+# --with-esp32: also install esp32:esp32@3.3.11 (the core the ThingBot packs are tested against,
+# ~1 GB), for an offline bundle: a classroom or competition venue with no Internet can then
+# compile for ThingBot without the on-demand download.
 set -euo pipefail
+
+ESP32_CORE="esp32:esp32@3.3.11"
+with_esp32=false
+for arg in "$@"; do
+    case "$arg" in
+        --with-esp32) with_esp32=true ;;
+        *) echo "unknown option: $arg" >&2; exit 1 ;;
+    esac
+done
 cd "$(dirname "$0")/.."
 
 case "$(uname -s)-$(uname -m)" in
@@ -21,6 +34,9 @@ esac
 
 "$cli" --config-file arduino-cli.yaml core update-index
 "$cli" --config-file arduino-cli.yaml core install arduino:avr
+if $with_esp32; then
+    "$cli" --config-file arduino-cli.yaml core install "$ESP32_CORE"
+fi
 
 # Prune the download cache and temp files; the indexes and packages/ stay.
 rm -rf data/staging data/tmp

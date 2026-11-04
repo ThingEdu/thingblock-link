@@ -296,14 +296,27 @@ pub async fn dispatch(
                 in_flight,
                 token,
                 install_guard,
-                package,
-                architecture,
-                version.unwrap_or_default(),
+                package.clone(),
+                architecture.clone(),
+                version.unwrap_or_else(|| pinned_version(&package, &architecture).to_string()),
             ));
         }
     }
 
     Ok(())
+}
+
+/// Core versions the vendored pack libraries are built and tested against (#9). An install that
+/// names no version gets this one rather than the latest release, which can break those libraries;
+/// an unlisted platform gets `""`, the latest indexed release.
+const PINNED_PLATFORMS: &[(&str, &str, &str)] = &[("esp32", "esp32", "3.3.11")];
+
+/// The version to install for a platform when the request names none.
+pub fn pinned_version(package: &str, architecture: &str) -> &'static str {
+    PINNED_PLATFORMS
+        .iter()
+        .find(|(p, a, _)| *p == package && *a == architecture)
+        .map_or("", |(_, _, version)| version)
 }
 
 /// Opens the monitor stream, confirms the port opened, replies `result {}`, and spawns the pump.
@@ -665,4 +678,19 @@ fn sketch_name(id: &str) -> String {
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect();
     format!("sketch_{safe}")
+}
+
+#[cfg(test)]
+mod pinned_version_tests {
+    use super::pinned_version;
+
+    #[test]
+    fn esp32_installs_the_tested_core_by_default() {
+        assert_eq!(pinned_version("esp32", "esp32"), "3.3.11");
+    }
+
+    #[test]
+    fn other_platforms_install_the_latest_release() {
+        assert_eq!(pinned_version("arduino", "avr"), "");
+    }
 }
