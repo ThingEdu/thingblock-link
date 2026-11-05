@@ -1,5 +1,5 @@
-//! BLE transport: the only module allowed to name `btleplug` types, so the session only sees
-//! plain data or opaque wrappers (the role `arduino::bridge` plays for gRPC).
+//! The BLE handler: the only module allowed to name `btleplug` types, so the `/io` session only
+//! sees plain data or opaque wrappers (the role `arduino::grpc` plays for arduino-cli).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::error::{Error, Result};
 
 /// The app-wide BLE radio, shared by every session so all scan/connect through one adapter.
-pub struct Ble {
+pub struct BleHandler {
     adapter: Adapter,
     /// Every peripheral seen by `scan`, keyed by string id: `PeripheralId` can't be rebuilt
     /// from the string sent to the browser, so `connect` looks it up here.
@@ -46,17 +46,17 @@ pub struct Notification {
     pub data: Vec<u8>,
 }
 
-impl Ble {
+impl BleHandler {
     /// Opens the first Bluetooth adapter. `Ok(None)` means no BLE radio, a normal condition
     /// (e.g. a desktop without Bluetooth); only adapter-subsystem failures are `Err`.
-    pub async fn discover() -> Result<Option<Ble>> {
+    pub async fn discover() -> Result<Option<BleHandler>> {
         let manager = Manager::new().await?;
         let mut adapters = manager.adapters().await?;
         if adapters.is_empty() {
             return Ok(None);
         }
         let adapter = adapters.remove(0);
-        Ok(Some(Ble {
+        Ok(Some(BleHandler {
             adapter,
             discovered: Mutex::new(HashMap::new()),
             scan_generation: AsyncMutex::new(0),
@@ -225,7 +225,7 @@ impl Conn {
     }
 
     /// Finds the `btleplug` characteristic for a `(service, char)` pair. Relies on
-    /// `Ble::connect` having run `discover_services`.
+    /// `BleHandler::connect` having run `discover_services`.
     fn find_characteristic(&self, service: Uuid, char: Uuid) -> Result<Characteristic> {
         self.peripheral
             .characteristics()

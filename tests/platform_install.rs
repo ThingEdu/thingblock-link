@@ -9,9 +9,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::{SinkExt, StreamExt};
+use thingblock_link::handler::arduino::{ArduinoHandler, default_config_dir};
+use thingblock_link::handler::thingblock::ThingblockHandler;
+use thingblock_link::handler::thingblock::resource::ResourceRoot;
 use thingblock_link::server;
-use thingblock_link::service::arduino::daemon::{Daemon, default_config_dir};
-use thingblock_link::service::resource::ResourceRoot;
 use thingblock_link::utils::tempdir::TempDir;
 use tokio::net::TcpListener;
 use tokio_tungstenite::connect_async;
@@ -19,27 +20,29 @@ use tokio_tungstenite::tungstenite::Message;
 
 /// Stand up `serve` against the in-repo config dir and return the address, the
 /// daemon handle (for lock manipulation), and the temp-resource-dir guard.
-async fn serve_ws() -> (SocketAddr, Arc<Daemon>, TempDir) {
-    let daemon = Arc::new(
-        Daemon::start_with(None, Some(default_config_dir()))
+async fn serve_ws() -> (SocketAddr, Arc<ArduinoHandler>, TempDir) {
+    let arduino = Arc::new(
+        ArduinoHandler::start_with(None, Some(default_config_dir()))
             .await
             .expect("daemon should start against the shipped config"),
     );
     let resources = TempDir::new("thingblock-link-install").expect("temp resource dir");
-    let resource_root = Arc::new(ResourceRoot::new(resources.path()).expect("resource root"));
+    let thingblock = Arc::new(ThingblockHandler::new(
+        ResourceRoot::new(resources.path()).expect("resource root"),
+    ));
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
         .expect("bind ws listener");
     let addr = listener.local_addr().expect("listener address");
-    let serve_daemon = daemon.clone();
+    let serve_arduino = arduino.clone();
     tokio::spawn(async move {
-        server::router::serve(listener, serve_daemon, resource_root)
+        server::router::serve(listener, serve_arduino, thingblock)
             .await
             .expect("serve");
     });
 
-    (addr, daemon, resources)
+    (addr, arduino, resources)
 }
 
 /// Send one request and read frames until the terminal (`result`/`error`) for
@@ -70,7 +73,7 @@ async fn request_terminal(addr: SocketAddr, request: &str, id: &str) -> serde_js
 
 #[tokio::test]
 async fn malformed_platform_id_is_invalid_request() {
-    let (addr, _daemon, _guard) = serve_ws().await;
+    let (addr, _arduino, _guard) = serve_ws().await;
 
     let reply = request_terminal(
         addr,
@@ -92,7 +95,7 @@ async fn malformed_platform_id_is_invalid_request() {
 
 #[tokio::test]
 async fn unknown_platform_fails_and_releases_the_install_lock() {
-    let (addr, daemon, _guard) = serve_ws().await;
+    let (addr, arduino, _guard) = serve_ws().await;
 
     let reply = request_terminal(
         addr,
@@ -111,7 +114,7 @@ async fn unknown_platform_fails_and_releases_the_install_lock() {
     // races the terminal reply, so poll briefly.
     let mut released = false;
     for _ in 0..50 {
-        if daemon.install_lock().try_lock_owned().is_ok() {
+        if arduino.install_lock().try_lock_owned().is_ok() {
             released = true;
             break;
         }
@@ -125,10 +128,10 @@ async fn unknown_platform_fails_and_releases_the_install_lock() {
 
 #[tokio::test]
 async fn concurrent_install_is_rejected_as_busy() {
-    let (addr, daemon, _guard) = serve_ws().await;
+    let (addr, arduino, _guard) = serve_ws().await;
 
     // Deterministically simulate an in-flight install by holding the lock.
-    let _guard_lock = daemon
+    let _guard_lock = arduino
         .install_lock()
         .try_lock_owned()
         .expect("lock should be free");

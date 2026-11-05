@@ -7,9 +7,10 @@
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
+use thingblock_link::handler::arduino::{ArduinoHandler, default_config_dir};
+use thingblock_link::handler::thingblock::ThingblockHandler;
+use thingblock_link::handler::thingblock::resource::ResourceRoot;
 use thingblock_link::server;
-use thingblock_link::service::arduino::daemon::{Daemon, default_config_dir};
-use thingblock_link::service::resource::ResourceRoot;
 use thingblock_link::utils::tempdir::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -57,9 +58,11 @@ async fn http_get(addr: SocketAddr, path: &str, origin: Option<&str>) -> HttpRes
 /// address plus the temp-resource-dir guard.
 async fn serve_api() -> (SocketAddr, TempDir) {
     let resources = TempDir::new("thingblock-link-api").expect("temp resource dir");
-    let resource_root = Arc::new(ResourceRoot::new(resources.path()).expect("resource root"));
-    let daemon = Arc::new(
-        Daemon::start_with(None, Some(default_config_dir()))
+    let thingblock = Arc::new(ThingblockHandler::new(
+        ResourceRoot::new(resources.path()).expect("resource root"),
+    ));
+    let arduino = Arc::new(
+        ArduinoHandler::start_with(None, Some(default_config_dir()))
             .await
             .expect("daemon should start against the shipped config"),
     );
@@ -69,7 +72,7 @@ async fn serve_api() -> (SocketAddr, TempDir) {
         .expect("bind listener");
     let addr = listener.local_addr().expect("listener address");
     tokio::spawn(async move {
-        server::router::serve(listener, daemon, resource_root)
+        server::router::serve(listener, arduino, thingblock)
             .await
             .expect("serve");
     });

@@ -10,9 +10,8 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::Deserialize;
 use thingblock_link::error::{Error, Result};
-use thingblock_link::server::protocol::{
-    Artifact, ArtifactPart, CompileOptions, CompileResult, LibRef, ResponseBody,
-};
+use thingblock_link::handler::arduino::model::{Artifact, ArtifactPart, CompileOptions};
+use thingblock_link::server::protocol::{CompileResult, LibRef, ResponseBody};
 use thingblock_link::service::arduino::bridge::{Responder, compile_stream};
 use thingblock_link::utils::tempdir::TempDir;
 use tokio::sync::mpsc;
@@ -51,19 +50,24 @@ pub async fn compile(
     let lib_dirs = req
         .libs
         .iter()
-        .map(|r| state.resource_root.resolve_lib_dir(&r.pack, &r.lib))
+        .map(|r| {
+            state
+                .thingblock
+                .resource_root()
+                .resolve_lib_dir(&r.pack, &r.lib)
+        })
         .collect::<Result<Vec<_>>>()?;
 
     let temp_base = TempDir::new("thingblock-compile")?;
     let (tx, rx) = mpsc::channel(RESPONSE_CHANNEL_CAPACITY);
     let token = CancellationToken::new();
 
-    let daemon = state.daemon.clone();
+    let arduino = state.arduino.clone();
     let task_token = token.clone();
     let responder = Responder::new(next_request_id(), tx);
     tokio::spawn(async move {
         compile_stream(
-            &daemon,
+            &arduino,
             &responder,
             &temp_base,
             &task_token,

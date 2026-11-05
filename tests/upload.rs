@@ -21,12 +21,13 @@ use std::sync::Arc;
 
 use futures::{SinkExt, StreamExt};
 use serde_json::json;
+use thingblock_link::handler::arduino::ArduinoHandler;
+use thingblock_link::handler::arduino::grpc::cli;
+use thingblock_link::handler::arduino::grpc::upload::build_request;
+use thingblock_link::handler::thingblock::ThingblockHandler;
+use thingblock_link::handler::thingblock::resource::ResourceRoot;
 use thingblock_link::server;
 use thingblock_link::service::arduino::bridge::stage_firmware_image;
-use thingblock_link::service::arduino::daemon::Daemon;
-use thingblock_link::service::arduino::grpc::cli;
-use thingblock_link::service::arduino::grpc::upload::build_request;
-use thingblock_link::service::resource::ResourceRoot;
 use thingblock_link::utils::tempdir::TempDir;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
@@ -38,16 +39,22 @@ type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 /// session. Returns the socket plus the resource-root temp-dir guard, whose path
 /// is also the root fixtures are built under.
 async fn connect_session() -> (Socket, TempDir) {
-    let daemon = Arc::new(Daemon::start(None).await.expect("daemon should start"));
+    let arduino = Arc::new(
+        ArduinoHandler::start(None)
+            .await
+            .expect("daemon should start"),
+    );
     let resources = TempDir::new("thingblock-link-flash-test").expect("temp resource dir");
-    let resource_root = Arc::new(ResourceRoot::new(resources.path()).expect("resource root"));
+    let thingblock = Arc::new(ThingblockHandler::new(
+        ResourceRoot::new(resources.path()).expect("resource root"),
+    ));
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
         .expect("bind ws listener");
     let addr = listener.local_addr().expect("listener address");
     tokio::spawn(async move {
-        server::router::serve(listener, daemon, resource_root)
+        server::router::serve(listener, arduino, thingblock)
             .await
             .expect("serve");
     });

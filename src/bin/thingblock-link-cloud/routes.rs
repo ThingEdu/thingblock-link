@@ -5,8 +5,8 @@ use std::sync::Arc;
 use axum::Router;
 use axum::routing::{get, post};
 use thingblock_link::error::Result;
-use thingblock_link::service::arduino::daemon::Daemon;
-use thingblock_link::service::resource::ResourceRoot;
+use thingblock_link::handler::arduino::ArduinoHandler;
+use thingblock_link::handler::thingblock::ThingblockHandler;
 use tokio::net::TcpListener;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
@@ -22,14 +22,14 @@ const MAX_COMPILE_BODY: usize = 1024 * 1024;
 /// belongs in a middleware-set request extension, not here.
 #[derive(Clone)]
 pub struct AppState {
-    pub daemon: Arc<Daemon>,
-    pub resource_root: Arc<ResourceRoot>,
+    pub arduino: Arc<ArduinoHandler>,
+    pub thingblock: Arc<ThingblockHandler>,
 }
 
 /// Builds the router: `/health`, `/compile`, and static `/resources`, behind CORS.
 /// Split from [`serve`] so tests can drive the router without a socket.
 pub fn app(state: AppState) -> Router {
-    let resources = ServeDir::new(state.resource_root.path());
+    let resources = ServeDir::new(state.thingblock.resource_root().path());
 
     Router::new()
         .route("/health", get(health::health))

@@ -7,9 +7,10 @@ use std::net::Ipv4Addr;
 use std::sync::Arc;
 
 use futures::{SinkExt, StreamExt};
+use thingblock_link::handler::arduino::ArduinoHandler;
+use thingblock_link::handler::thingblock::ThingblockHandler;
+use thingblock_link::handler::thingblock::resource::ResourceRoot;
 use thingblock_link::server;
-use thingblock_link::service::arduino::daemon::Daemon;
-use thingblock_link::service::resource::ResourceRoot;
 use thingblock_link::utils::tempdir::TempDir;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
@@ -40,16 +41,22 @@ async fn round_trip(socket: &mut Socket, request: &str) -> serde_json::Value {
 
 #[tokio::test]
 async fn connect_disconnect_round_trip() {
-    let daemon = Arc::new(Daemon::start(None).await.expect("daemon should start"));
+    let arduino = Arc::new(
+        ArduinoHandler::start(None)
+            .await
+            .expect("daemon should start"),
+    );
     let resources = TempDir::new("thingblock-link-test-res").expect("temp resource dir");
-    let resource_root = Arc::new(ResourceRoot::new(resources.path()).expect("resource root"));
+    let thingblock = Arc::new(ThingblockHandler::new(
+        ResourceRoot::new(resources.path()).expect("resource root"),
+    ));
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
         .expect("bind ws listener");
     let addr = listener.local_addr().expect("listener address");
     tokio::spawn(async move {
-        server::router::serve(listener, daemon, resource_root)
+        server::router::serve(listener, arduino, thingblock)
             .await
             .expect("serve");
     });

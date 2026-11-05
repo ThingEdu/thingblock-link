@@ -7,9 +7,10 @@ use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use thingblock_link::handler::arduino::ArduinoHandler;
+use thingblock_link::handler::thingblock::ThingblockHandler;
+use thingblock_link::handler::thingblock::resource::ResourceRoot;
 use thingblock_link::server;
-use thingblock_link::service::arduino::daemon::Daemon;
-use thingblock_link::service::resource::ResourceRoot;
 use thingblock_link::utils::tempdir::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -18,8 +19,14 @@ use tokio::net::{TcpListener, TcpStream};
 async fn serves_resources_while_ble_discovery_hangs() {
     let resources = TempDir::new("thingblock-link-ble-pending").expect("temp resource dir");
     fs::write(resources.path().join("hello.txt"), "hi").expect("write file");
-    let resource_root = Arc::new(ResourceRoot::new(resources.path()).expect("resource root"));
-    let daemon = Arc::new(Daemon::start(None).await.expect("daemon should start"));
+    let thingblock = Arc::new(ThingblockHandler::new(
+        ResourceRoot::new(resources.path()).expect("resource root"),
+    ));
+    let arduino = Arc::new(
+        ArduinoHandler::start(None)
+            .await
+            .expect("daemon should start"),
+    );
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
@@ -27,7 +34,7 @@ async fn serves_resources_while_ble_discovery_hangs() {
     let addr = listener.local_addr().expect("listener address");
     tokio::spawn(async move {
         // A discovery that never finishes, as when the permission prompt is left unanswered.
-        server::router::serve_with_ble(listener, daemon, resource_root, std::future::pending())
+        server::router::serve_with_ble(listener, arduino, thingblock, std::future::pending())
             .await
             .expect("serve");
     });

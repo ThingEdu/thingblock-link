@@ -8,8 +8,9 @@ use std::sync::Arc;
 
 use clap::Parser;
 use thingblock_link::error::Result;
-use thingblock_link::service::arduino::daemon::{Daemon, default_config_dir};
-use thingblock_link::service::resource::ResourceRoot;
+use thingblock_link::handler::arduino::{ArduinoHandler, default_config_dir};
+use thingblock_link::handler::thingblock::ThingblockHandler;
+use thingblock_link::handler::thingblock::resource::ResourceRoot;
 use tokio::net::TcpListener;
 
 const DEFAULT_PORT: u16 = 8080;
@@ -56,15 +57,15 @@ async fn main() -> Result<()> {
     let resource_root = args.resource_root.unwrap_or_else(default_resource_root);
     let config_dir = args.config_dir.unwrap_or_else(default_config_dir);
 
-    let daemon = Arc::new(Daemon::start_with(args.arduino_cli, Some(config_dir)).await?);
-    let resource_root = Arc::new(ResourceRoot::new(resource_root)?);
+    let arduino = Arc::new(ArduinoHandler::start_with(args.arduino_cli, Some(config_dir)).await?);
+    let thingblock = Arc::new(ThingblockHandler::new(ResourceRoot::new(resource_root)?));
     let listener = TcpListener::bind(("0.0.0.0", args.port)).await?;
 
     routes::serve(
         listener,
         routes::AppState {
-            daemon,
-            resource_root,
+            arduino,
+            thingblock,
         },
     )
     .await

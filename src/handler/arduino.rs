@@ -1,5 +1,9 @@
-//! Spawns and owns the arduino-cli daemon process, holds its gRPC channel, and runs the
-//! `Create`/`Init` handshake once for the instance id every other RPC needs.
+//! The arduino-cli handler: spawns and owns the arduino-cli daemon process, holds its gRPC
+//! channel, and runs the `Create`/`Init` handshake once for the instance id every other RPC
+//! needs. The per-RPC translations live in [`grpc`].
+
+pub mod grpc;
+pub mod model;
 
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -11,14 +15,14 @@ use tonic::transport::Channel;
 use tracing::{debug, info, warn};
 
 use crate::error::{Error, Result};
-use crate::service::arduino::grpc::{Client, cli};
+use grpc::{Client, cli};
 
 /// How long to wait for the freshly spawned daemon to start accepting gRPC.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Handle to the running arduino-cli daemon and its initialized gRPC instance.
-pub struct Daemon {
+pub struct ArduinoHandler {
     /// Held only so `kill_on_drop` kills the daemon with us.
     _child: Child,
     channel: Channel,
@@ -28,7 +32,7 @@ pub struct Daemon {
     install_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
 }
 
-impl Daemon {
+impl ArduinoHandler {
     /// [`Self::start_with`] without a config dir, so arduino-cli uses its defaults
     /// (`~/.arduino15`). Used by tests.
     pub async fn start(cli_path: Option<PathBuf>) -> Result<Self> {

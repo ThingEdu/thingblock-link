@@ -15,9 +15,10 @@ use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 use crate::ui::window::{self, StatusView, StatusWindow, Telemetry};
+use thingblock_link::handler::arduino::ArduinoHandler;
+use thingblock_link::handler::thingblock::ThingblockHandler;
+use thingblock_link::handler::thingblock::resource::ResourceRoot;
 use thingblock_link::server;
-use thingblock_link::service::arduino::daemon::Daemon;
-use thingblock_link::service::resource::ResourceRoot;
 
 /// How often the status window's board-count / health rows are refreshed.
 const TELEMETRY_INTERVAL: Duration = Duration::from_secs(3);
@@ -109,7 +110,7 @@ pub fn run(
     let stdin_proxy = proxy.clone();
     runtime.spawn(watch_stdin_for_shutdown(stdin_proxy));
 
-    // Daemon + WS server + telemetry poller; status flows back through the proxy.
+    // ArduinoHandler + WS server + telemetry poller; status flows back through the proxy.
     runtime.spawn(run_services(
         port,
         resource_root,
@@ -201,7 +202,7 @@ async fn watch_stdin_for_shutdown(proxy: EventLoopProxy<UserEvent>) {
 }
 
 /// Tears down the helper and exits the loop. Dropping the runtime drops the last
-/// `Arc<Daemon>`, whose `kill_on_drop` reaps the arduino-cli daemon.
+/// `Arc<ArduinoHandler>`, whose `kill_on_drop` reaps the arduino-cli daemon.
 fn shutdown(runtime: &mut Option<Runtime>, control_flow: &mut ControlFlow) {
     info!("quit requested; shutting down");
     if let Some(runtime) = runtime.take() {
@@ -223,8 +224,8 @@ async fn run_services(
 
     // Fail fast on a missing pack dir: it's a packaging error, and the editor can't load
     // resources or compile vendored libs without it.
-    let resource_root = match ResourceRoot::new(&resource_root) {
-        Ok(root) => Arc::new(root),
+    let thingblock = match ResourceRoot::new(&resource_root) {
+        Ok(root) => Arc::new(ThingblockHandler::new(root)),
         Err(e) => {
             error!(error = %e, path = %resource_root.display(), "resource root invalid");
             let _ = proxy.send_event(UserEvent::Status(Status::Failed(e.to_string())));
@@ -232,8 +233,8 @@ async fn run_services(
         }
     };
 
-    let daemon = match Daemon::start_with(cli_path, Some(config_dir)).await {
-        Ok(daemon) => Arc::new(daemon),
+    let arduino = match ArduinoHandler::start_with(cli_path, Some(config_dir)).await {
+        Ok(arduino) => Arc::new(arduino),
         Err(e) => {
             error!(error = %e, "daemon failed to start");
             let _ = proxy.send_event(UserEvent::Status(Status::Failed(e.to_string())));
@@ -252,9 +253,9 @@ async fn run_services(
 
     let _ = proxy.send_event(UserEvent::Status(Status::Running(port)));
 
-    tokio::spawn(poll_telemetry(daemon.clone(), proxy.clone()));
+    tokio::spawn(poll_telemetry(arduino.clone(), proxy.clone()));
 
-    if let Err(e) = server::router::serve(listener, daemon, resource_root).await {
+    if let Err(e) = server::router::serve(listener, arduino, thingblock).await {
         error!(error = %e, "ws server stopped");
         let _ = proxy.send_event(UserEvent::Status(Status::Failed(e.to_string())));
     }
@@ -262,11 +263,11 @@ async fn run_services(
 
 /// Periodically reports connected-board count and daemon health to the status window.
 /// A failed probe means the daemon is unresponsive; a send error means the loop is gone.
-async fn poll_telemetry(daemon: Arc<Daemon>, proxy: EventLoopProxy<UserEvent>) {
+async fn poll_telemetry(arduino: Arc<ArduinoHandler>, proxy: EventLoopProxy<UserEvent>) {
     let mut interval = tokio::time::interval(TELEMETRY_INTERVAL);
     loop {
         interval.tick().await;
-        let telemetry = match daemon.client().connected_board_count().await {
+        let telemetry = match arduino.client().connected_board_count().await {
             Ok(boards) => Telemetry {
                 boards,
                 healthy: true,

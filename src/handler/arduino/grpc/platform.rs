@@ -5,8 +5,8 @@ use futures::Stream;
 use tonic::Streaming;
 
 use crate::error::{Error, Result};
-use crate::server::protocol::PlatformStatus;
-use crate::service::arduino::grpc::{Client, cli};
+use crate::handler::arduino::grpc::{Client, cli};
+use crate::handler::arduino::model::PlatformInfo;
 
 /// One translated step of a platform install, in the helper's own shapes.
 #[derive(Debug)]
@@ -23,7 +23,7 @@ pub enum PlatformInstallEvent {
 impl Client {
     /// Searches the package indexes for platforms matching `query` (empty matches all),
     /// each with its install status.
-    pub async fn platform_search(&mut self, query: &str) -> Result<Vec<PlatformStatus>> {
+    pub async fn platform_search(&mut self, query: &str) -> Result<Vec<PlatformInfo>> {
         let instance = *self.instance();
         let response = self
             .inner()
@@ -62,9 +62,9 @@ impl Client {
     }
 }
 
-/// Maps a `PlatformSummary` to [`PlatformStatus`]. The display name lives on a release,
+/// Maps a `PlatformSummary` to [`PlatformInfo`]. The display name lives on a release,
 /// so it prefers the latest, then the installed one, then the id.
-fn to_status(summary: cli::PlatformSummary) -> PlatformStatus {
+fn to_status(summary: cli::PlatformSummary) -> PlatformInfo {
     let metadata = summary.metadata.unwrap_or_default();
     let name = summary
         .releases
@@ -74,7 +74,7 @@ fn to_status(summary: cli::PlatformSummary) -> PlatformStatus {
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| metadata.id.clone());
 
-    PlatformStatus {
+    PlatformInfo {
         id: metadata.id,
         name,
         installed: !summary.installed_version.is_empty(),
