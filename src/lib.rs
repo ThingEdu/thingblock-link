@@ -8,4 +8,5 @@
 pub mod error;
 pub mod utils;
 
+pub mod gateway;
 pub mod handler;
