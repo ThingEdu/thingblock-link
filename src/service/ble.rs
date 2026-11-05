@@ -1,4 +1,4 @@
-//! The BLE handler: the only module that names `btleplug` types; callers see plain data or
+//! The BLE service: the only module that names `btleplug` types; callers see plain data or
 //! opaque wrappers.
 
 use std::collections::HashMap;
@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::error::{Error, Result};
 
 /// The app-wide BLE radio, shared by every session.
-pub struct BleHandler {
+pub struct BleService {
     adapter: Adapter,
     /// Every peripheral seen by `scan`, keyed by string id, for `connect` to look up.
     discovered: Mutex<HashMap<String, Peripheral>>,
@@ -43,17 +43,17 @@ pub struct Notification {
     pub data: Vec<u8>,
 }
 
-impl BleHandler {
+impl BleService {
     /// Opens the first Bluetooth adapter. `Ok(None)` means no BLE radio; only adapter-subsystem
     /// failures are `Err`.
-    pub async fn discover() -> Result<Option<BleHandler>> {
+    pub async fn discover() -> Result<Option<BleService>> {
         let manager = Manager::new().await?;
         let mut adapters = manager.adapters().await?;
         if adapters.is_empty() {
             return Ok(None);
         }
         let adapter = adapters.remove(0);
-        Ok(Some(BleHandler {
+        Ok(Some(BleService {
             adapter,
             discovered: Mutex::new(HashMap::new()),
             scan_generation: AsyncMutex::new(0),
@@ -219,7 +219,7 @@ impl Conn {
     }
 
     /// Finds the `btleplug` characteristic for a `(service, char)` pair. Relies on
-    /// `BleHandler::connect` having run `discover_services`.
+    /// `BleService::connect` having run `discover_services`.
     fn find_characteristic(&self, service: Uuid, char: Uuid) -> Result<Characteristic> {
         self.peripheral
             .characteristics()

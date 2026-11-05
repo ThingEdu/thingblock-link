@@ -1,4 +1,4 @@
-//! Arduino data types the handler produces and consumes, shared by every gateway's wire model.
+//! Arduino data types the service produces and consumes, shared by every gateway's wire model.
 
 use serde::{Deserialize, Serialize};
 

@@ -14,7 +14,7 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 use crate::ui::window::{self, StatusView, StatusWindow, Telemetry};
 use thingblock_link::gateway::{GatewayType, LinkConfig, ThingblockLink};
-use thingblock_link::handler::arduino::ArduinoHandler;
+use thingblock_link::service::arduino::ArduinoService;
 
 /// How often the status window's board-count / health rows are refreshed.
 const TELEMETRY_INTERVAL: Duration = Duration::from_secs(3);
@@ -104,7 +104,7 @@ pub fn run(
     let stdin_proxy = proxy.clone();
     runtime.spawn(watch_stdin_for_shutdown(stdin_proxy));
 
-    // ArduinoHandler + WS server + telemetry poller; status flows back through the proxy.
+    // ArduinoService + WS server + telemetry poller; status flows back through the proxy.
     runtime.spawn(run_services(
         port,
         resource_root,
@@ -240,7 +240,7 @@ async fn run_services(
 
 /// Periodically reports connected-board count and daemon health to the status window.
 /// A failed probe means the daemon is unresponsive; a send error means the loop is gone.
-async fn poll_telemetry(arduino: Arc<ArduinoHandler>, proxy: EventLoopProxy<UserEvent>) {
+async fn poll_telemetry(arduino: Arc<ArduinoService>, proxy: EventLoopProxy<UserEvent>) {
     let mut interval = tokio::time::interval(TELEMETRY_INTERVAL);
     loop {
         interval.tick().await;

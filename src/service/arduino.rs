@@ -1,4 +1,4 @@
-//! The arduino-cli handler: spawns and owns the arduino-cli daemon process, holds its gRPC
+//! The arduino-cli service: spawns and owns the arduino-cli daemon process, holds its gRPC
 //! channel, and runs the `Create`/`Init` handshake once for the instance id every other RPC
 //! needs. The per-RPC translations live in [`grpc`].
 
@@ -22,8 +22,8 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Handle to the running arduino-cli daemon and its initialized gRPC instance.
-pub struct ArduinoHandler {
-    /// The daemon process, killed when this handler drops.
+pub struct ArduinoService {
+    /// The daemon process, killed when this service drops.
     _child: Child,
     channel: Channel,
     instance: cli::Instance,
@@ -31,7 +31,7 @@ pub struct ArduinoHandler {
     install_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
 }
 
-impl ArduinoHandler {
+impl ArduinoService {
     /// [`Self::start_with`] without a config dir: arduino-cli uses its defaults
     /// (`~/.arduino15`). Used by tests.
     pub async fn start(cli_path: Option<PathBuf>) -> Result<Self> {

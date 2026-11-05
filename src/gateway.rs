@@ -10,10 +10,10 @@ use tracing::{info, warn};
 use crate::{
     error::Result,
     gateway::{http_local::HttpLocalGateway, tcp_local::TcpGateway},
-    handler::{
-        arduino::ArduinoHandler,
-        ble::BleHandler,
-        thingblock::{ThingblockHandler, resource::ResourceRoot},
+    service::{
+        arduino::ArduinoService,
+        ble::BleService,
+        thingblock::{ThingblockService, resource::ResourceRoot},
     },
 };
 
@@ -24,9 +24,9 @@ pub enum GatewayType {
 
 #[derive(Clone)]
 struct GatewayContext {
-    arduino: Arc<ArduinoHandler>,
-    ble: Option<Arc<BleHandler>>,
-    thingblock: Arc<ThingblockHandler>,
+    arduino: Arc<ArduinoService>,
+    ble: Option<Arc<BleService>>,
+    thingblock: Arc<ThingblockService>,
 }
 
 enum Gateway {
@@ -51,16 +51,16 @@ pub struct ThingblockLink {
 
 impl ThingblockLink {
     pub async fn new(gateway_type: GatewayType, config: LinkConfig) -> Result<Self> {
-        let thingblock = Arc::new(ThingblockHandler::new(ResourceRoot::new(
+        let thingblock = Arc::new(ThingblockService::new(ResourceRoot::new(
             &config.resource_root,
         )?));
 
         let arduino = Arc::new(
-            ArduinoHandler::start_with(config.arduino_cli, Some(config.config_dir)).await?,
+            ArduinoService::start_with(config.arduino_cli, Some(config.config_dir)).await?,
         );
 
-        // only init BleHandler if ble adapter is available, otherwise None
-        let ble = match BleHandler::discover().await {
+        // only init BleService if ble adapter is available, otherwise None
+        let ble = match BleService::discover().await {
             Ok(Some(ble)) => Some(Arc::new(ble)),
             Ok(None) => {
                 info!("no BLE adapter found; BLE disabled");
@@ -87,7 +87,7 @@ impl ThingblockLink {
         })
     }
 
-    pub fn arduino(&self) -> Arc<ArduinoHandler> {
+    pub fn arduino(&self) -> Arc<ArduinoService> {
         self.context.arduino.clone()
     }
 

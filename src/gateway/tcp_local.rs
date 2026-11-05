@@ -5,11 +5,11 @@ pub struct TcpGateway {
 }
 
 impl TcpGateway {
-    pub(crate) fn new(port: u16) -> Self {
+    pub fn new(port: u16) -> Self {
         TcpGateway { port }
     }
 
-    pub(crate) async fn serve(&self, _context: GatewayContext) -> Result<()> {
+    pub async fn serve(&self, _context: GatewayContext) -> Result<()> {
         Ok(())
     }
 }

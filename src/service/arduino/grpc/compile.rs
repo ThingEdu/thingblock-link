@@ -8,8 +8,8 @@ use tonic::Streaming;
 use tracing::warn;
 
 use crate::error::{Error, Result};
-use crate::handler::arduino::grpc::{Client, cli};
-use crate::handler::arduino::model::{Artifact, ArtifactPart, CompileOptions};
+use crate::service::arduino::grpc::{Client, cli};
+use crate::service::arduino::model::{Artifact, ArtifactPart, CompileOptions};
 
 /// One translated step of a compile, in the helper's own shapes.
 #[derive(Debug)]

@@ -5,8 +5,8 @@ use futures::Stream;
 use tonic::Streaming;
 
 use crate::error::{Error, Result};
-use crate::handler::arduino::grpc::{Client, cli};
-use crate::handler::arduino::model::PlatformInfo;
+use crate::service::arduino::grpc::{Client, cli};
+use crate::service::arduino::model::PlatformInfo;
 
 /// One translated step of a platform install, in the helper's own shapes.
 #[derive(Debug)]

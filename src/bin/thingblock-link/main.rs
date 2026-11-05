@@ -59,7 +59,7 @@ fn main() -> std::io::Result<()> {
     let resource_root = args.resource_root.unwrap_or_else(default_resource_root);
     let config_dir = args
         .config_dir
-        .unwrap_or_else(thingblock_link::handler::arduino::default_config_dir);
+        .unwrap_or_else(thingblock_link::service::arduino::default_config_dir);
 
     // tao's event loop must own the main thread, so services run on this runtime and the
     // tray takes over; `tray::run` never returns, the process exits from its loop on Quit.

@@ -4,8 +4,8 @@
 use tracing::warn;
 
 use crate::error::Result;
-use crate::handler::arduino::grpc::{Client, cli};
-use crate::handler::arduino::model::ConnectionTarget;
+use crate::service::arduino::grpc::{Client, cli};
+use crate::service::arduino::model::ConnectionTarget;
 
 /// Discovery window for a one-shot board enumeration.
 const BOARD_LIST_TIMEOUT_MS: i64 = 1000;

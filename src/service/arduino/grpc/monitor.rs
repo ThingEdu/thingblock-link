@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 use tonic::Streaming;
 
 use crate::error::{Error, Result};
-use crate::handler::arduino::grpc::{Client, cli};
+use crate::service::arduino::grpc::{Client, cli};
 
 /// One translated step of a monitor session, in the helper's own shapes.
 #[derive(Debug)]
