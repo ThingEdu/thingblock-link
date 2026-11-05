@@ -10,16 +10,9 @@ the editor into arduino-cli gRPC calls and pumps streamed results back; it does 
 any arduino logic.
 
 This is a deliberately **separate repo** from the thingblock-editor monorepo. The two share a small,
-fixed set of contracts — the WebSocket `{id, type, payload}` envelope (the proxy face) and, once
-resource serving lands, the static `/resources/<pack>/…` URL layout the editor loads from (see
-`25-06_01.resource-serving.md`). Everything about the daemon stays hidden from the JS side.
-
-**Source of truth:** `.agents/docs/21-06_01.arduino-helper-design.md` owns the WS protocol, the
-crate layout, the dependency stack, and the milestone roadmap. Read it before doing design work;
-keep it authoritative and update it when the protocol or architecture changes.
-`.agents/docs/25-06_01.resource-serving.md` covers the planned addition beyond the proxy role —
-serving extension resource packs as static files, with `compile` resolving each pack's vendored
-`lib/` source from the served resource root (no lib bytes over the WS).
+fixed set of contracts — the WebSocket `{id, type, payload}` envelope (the proxy face) and the
+static `/resources/<pack>/…` URL layout the editor loads from. Everything about the daemon stays
+hidden from the JS side.
 
 ## Build, test, lint
 
@@ -40,7 +33,7 @@ Use these unless the user asks otherwise:
 1. Keep changes minimal and scoped to the request. Don't refactor, add features, or restyle code
    you weren't asked to touch.
 2. This is a standalone binary, not a published library — restructure internals freely. The one
-   contract to preserve is the WS protocol (see the design doc); don't change it casually.
+   contract to preserve is the WS protocol; don't change it casually.
 3. Comments explain the current code, not its history. If something is counterintuitive, explain
    why it is correct now.
 4. Fix root causes, not symptoms. Don't add fallbacks or validation for states that cannot happen.
@@ -63,6 +56,6 @@ Use these unless the user asks otherwise:
 
 - **Scope**: changes confined to the request; nothing extra added.
 - **Build/test/lint clean**: `cargo build`, `cargo test`, `cargo clippy`, `cargo fmt --check`.
-- **Docs in sync**: if you change a convention or the architecture, update this file and the
-  design doc accordingly.
+- **Docs in sync**: if you change a convention or the architecture, update this file
+  accordingly.
 - **Commit format**: Conventional Commits.
