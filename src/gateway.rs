@@ -1,10 +1,25 @@
+use tonic::Code::Ok;
+
 use crate::{
-    gateway::{http_local::HttpLocalGateway, tcp::TcpGateway},
-    handler::{arduino, ble, thingblock},
+    gateway::{
+        GatewayType::{HTTP, TCP},
+        http_local::HttpLocalGateway,
+        tcp::TcpGateway,
+    },
+    handler::{
+        arduino::{self, ArduinoHandler},
+        ble::{self, BleHandler},
+        thingblock::{self, ThingblockHandler},
+    },
 };
 
 mod http_local;
 mod tcp;
+
+pub enum GatewayType {
+    HTTP,
+    TCP,
+}
 
 pub struct GatewayContext {
     // internal handlers
@@ -14,17 +29,32 @@ pub struct GatewayContext {
 }
 
 pub trait Gateway {
-    fn serve(context: GatewayContext);
+    fn serve(&self, context: &GatewayContext);
 }
 
-pub struct ThingblockLink {}
+pub struct ThingblockLink {
+    context: GatewayContext,
+    gateway: Box<dyn Gateway>,
+}
 
 impl ThingblockLink {
-    pub fn init_http() -> HttpLocalGateway {
-        HttpLocalGateway {}
+    fn init(gateway_type: GatewayType) -> Result<Self, Box<dyn std::error::Error>> {
+        let context = GatewayContext {
+            // todo: init context here
+        };
+
+        let gateway: Box<dyn Gateway> = match gateway_type {
+            HTTP => Box::new(HttpLocalGateway {}),
+            TCP => Box::new(TcpGateway {}),
+        };
+
+        Ok(Self {
+            gateway: gateway,
+            context: context,
+        })
     }
 
-    pub fn init_tcp() -> TcpGateway {
-        TcpGateway {}
+    fn serve(&self) {
+        self.gateway.serve(&self.context);
     }
 }
