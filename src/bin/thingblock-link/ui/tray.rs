@@ -322,14 +322,14 @@ fn build_tray() -> Tray {
 fn glyph_rgba() -> image::RgbaImage {
     const PNG: &[u8] = include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/brand/icons/icon-32.png"
+        "/assets/icon/icons/icon-32.png"
     ));
     image::load_from_memory(PNG)
         .expect("decode embedded tray icon png")
         .into_rgba8()
 }
 
-/// Tray icon for a status, a glanceable supplement to the menu line (see `brand/DESIGN.md`):
+/// Tray icon for a status, a glanceable supplement to the menu line (see `assets/icon/DESIGN.md`):
 /// full color when running, 60% opacity when starting, error dot when failed.
 fn icon_for(status: &Status) -> Icon {
     let mut image = glyph_rgba();

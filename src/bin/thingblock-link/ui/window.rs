@@ -10,7 +10,7 @@ use wry::http::Request;
 use wry::{WebView, WebViewBuilder};
 
 /// Lifecycle snapshot for the status row, mirroring the tray's `Status`.
-/// JSON shape is a contract with `assets/status.html`'s `__status` handler.
+/// JSON shape is a contract with `assets/status_dialog.html`'s `__status` handler.
 #[derive(Clone, Serialize)]
 pub struct StatusView {
     /// `"starting"`, `"running"`, or `"failed"`.
@@ -130,10 +130,13 @@ fn build_webview(builder: WebViewBuilder<'_>, window: &Window) -> WebView {
 /// Fills the embedded page template with the brand glyph and initial state, so the page
 /// paints correctly before any `evaluate_script` update arrives.
 fn render_html(status: &StatusView, telemetry: Telemetry) -> String {
-    const TEMPLATE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/status.html"));
+    const TEMPLATE: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/status_dialog.html"
+    ));
     const GLYPH: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/brand/thingblock-icon.svg"
+        "/assets/icon/thingblock-icon.svg"
     ));
 
     let status_json = serde_json::to_string(status).expect("serialize initial status");

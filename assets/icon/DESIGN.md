@@ -73,7 +73,7 @@ use tray_icon::Icon;
 
 fn load_tray_icon() -> Icon {
     // Embed at compile time so the binary is self-contained.
-    let png = include_bytes!("../brand/icons/icon-32.png");
+    let png = include_bytes!("../assets/icon/icons/icon-32.png");
     let img = image::load_from_memory(png)
         .expect("valid tray icon png")
         .into_rgba8();
