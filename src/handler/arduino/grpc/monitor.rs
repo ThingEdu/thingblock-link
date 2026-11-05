@@ -18,8 +18,7 @@ pub enum MonitorEvent {
     Error(String),
 }
 
-/// A command pushed into an open monitor's outbound stream, keeping `cli::MonitorRequest`
-/// out of the session and bridge.
+/// A command pushed into an open monitor's outbound stream.
 #[derive(Debug)]
 pub enum MonitorCommand {
     Write(Vec<u8>),
@@ -44,8 +43,7 @@ impl Client {
     }
 }
 
-/// Builds the serial `MonitorPortOpenRequest` with a `baudrate` setting; pure so it's testable.
-/// `fqbn` stays empty: it only disambiguates multiple monitors for a protocol, never so for serial.
+/// Builds the serial `MonitorPortOpenRequest` with a `baudrate` setting and an empty `fqbn`.
 pub fn build_open_request(
     instance: cli::Instance,
     port: &str,
@@ -125,14 +123,14 @@ fn into_events(
                     }
                 }
                 Ok(None) => return None,
-                Err(status) => return Some((Err(Error::Grpc(status)), (stream, true))),
+                Err(status) => return Some((Err(Error::from(status)), (stream, true))),
             }
         }
     })
 }
 
 /// Maps one `MonitorResponse` to a `MonitorEvent`, or `None` for an empty frame.
-/// Serial bytes decode UTF-8-lossily because the editor's `SerialLog` consumes text.
+/// Serial bytes are decoded as lossy UTF-8.
 fn translate(resp: cli::MonitorResponse) -> Option<Result<MonitorEvent>> {
     use cli::monitor_response::Message;
 

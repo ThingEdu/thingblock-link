@@ -1,5 +1,5 @@
-//! `BoardList` translation backing WS `listBoards`. JS `pnpid`s are Windows PNP ids
-//! (`USB\VID_2341&PID_0043`), so they're rebuilt from arduino-cli's `vid`/`pid` port properties.
+//! `BoardList` translation backing WS `listBoards`. `pnpid`s are rebuilt as Windows PNP ids
+//! (`USB\VID_2341&PID_0043`) from arduino-cli's `vid`/`pid` port properties.
 
 use tracing::warn;
 
@@ -12,7 +12,7 @@ const BOARD_LIST_TIMEOUT_MS: i64 = 1000;
 
 impl Client {
     /// Lists connected boards whose USB pnpid is in `pnpid`, as `ConnectionTarget`s.
-    /// Backs WS `listBoards`, so the editor only sees boards its device supports.
+    /// Backs WS `listBoards`.
     pub async fn board_list(&mut self, pnpid: &[String]) -> Result<Vec<ConnectionTarget>> {
         let instance = *self.instance();
         let resp = self
@@ -53,8 +53,7 @@ impl Client {
     }
 }
 
-/// Counts detected ports with a USB vid/pid, so generic serial devices aren't counted.
-/// Pure (no I/O) so it is unit-testable without hardware.
+/// Counts detected ports that have a USB vid/pid. Pure (no I/O).
 pub fn count_board_ports(ports: &[cli::DetectedPort]) -> usize {
     ports
         .iter()
@@ -63,7 +62,7 @@ pub fn count_board_ports(ports: &[cli::DetectedPort]) -> usize {
 }
 
 /// Maps detected ports to `ConnectionTarget`s, keeping only those whose pnpid is in `pnpid`.
-/// Pure (no I/O) so it is unit-testable without hardware.
+/// Pure (no I/O).
 pub fn detected_ports_to_targets(
     ports: &[cli::DetectedPort],
     pnpid: &[String],
@@ -92,7 +91,7 @@ fn port_pnp_id(port: &cli::Port) -> Option<String> {
     Some(format!("USB\\VID_{vid}&PID_{pid}"))
 }
 
-/// Strips a leading `0x`/`0X` and uppercases (`0x2341` -> `2341`) to match the PNP id form.
+/// Strips a leading `0x`/`0X` and uppercases (`0x2341` -> `2341`).
 fn normalize_hex_id(raw: &str) -> String {
     raw.strip_prefix("0x")
         .or_else(|| raw.strip_prefix("0X"))

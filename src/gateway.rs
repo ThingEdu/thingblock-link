@@ -1,60 +1,101 @@
-use tonic::Code::Ok;
+mod http_cloud;
+mod http_local;
+mod tcp_local;
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use tracing::{info, warn};
 
 use crate::{
-    gateway::{
-        GatewayType::{HTTP, TCP},
-        http_local::HttpLocalGateway,
-        tcp::TcpGateway,
-    },
+    error::Result,
+    gateway::{http_local::HttpLocalGateway, tcp_local::TcpGateway},
     handler::{
-        arduino::{self, ArduinoHandler},
-        ble::{self, BleHandler},
-        thingblock::{self, ThingblockHandler},
+        arduino::ArduinoHandler,
+        ble::BleHandler,
+        thingblock::{ThingblockHandler, resource::ResourceRoot},
     },
 };
 
-mod http_local;
-mod tcp;
-
 pub enum GatewayType {
-    HTTP,
-    TCP,
+    Http { port: u16 },
+    Tcp { port: u16 },
 }
 
-pub struct GatewayContext {
-    // internal handlers
-    arduino: arduino::ArduinoHandler,
-    ble: ble::BleHandler,
-    thingblock: thingblock::ThingblockHandler,
+#[derive(Clone)]
+struct GatewayContext {
+    arduino: Arc<ArduinoHandler>,
+    ble: Option<Arc<BleHandler>>,
+    thingblock: Arc<ThingblockHandler>,
 }
 
-pub trait Gateway {
-    fn serve(&self, context: &GatewayContext);
+enum Gateway {
+    Http(HttpLocalGateway),
+    Tcp(TcpGateway),
 }
 
+/// Configuration for ThingblockLink,
+///
+/// `resource_root`: path to `thingblock-resource` directory
+/// `arduino_cli`: optional path to the Arduino CLI executable
+/// `config_dir`: path to the directory containing the arduino-cli.yaml config file
+pub struct LinkConfig {
+    pub resource_root: PathBuf,
+    pub arduino_cli: Option<PathBuf>,
+    pub config_dir: PathBuf,
+}
 pub struct ThingblockLink {
     context: GatewayContext,
-    gateway: Box<dyn Gateway>,
+    gateway: Gateway,
 }
 
 impl ThingblockLink {
-    fn init(gateway_type: GatewayType) -> Result<Self, Box<dyn std::error::Error>> {
-        let context = GatewayContext {
-            // todo: init context here
+    pub async fn new(gateway_type: GatewayType, config: LinkConfig) -> Result<Self> {
+        let thingblock = Arc::new(ThingblockHandler::new(ResourceRoot::new(
+            &config.resource_root,
+        )?));
+
+        let arduino = Arc::new(
+            ArduinoHandler::start_with(config.arduino_cli, Some(config.config_dir)).await?,
+        );
+
+        // only init BleHandler if ble adapter is available, otherwise None
+        let ble = match BleHandler::discover().await {
+            Ok(Some(ble)) => Some(Arc::new(ble)),
+            Ok(None) => {
+                info!("no BLE adapter found; BLE disabled");
+                None
+            }
+            Err(e) => {
+                warn!(error = %e, "BLE adapter unavailable; BLE disabled");
+                None
+            }
         };
 
-        let gateway: Box<dyn Gateway> = match gateway_type {
-            HTTP => Box::new(HttpLocalGateway {}),
-            TCP => Box::new(TcpGateway {}),
+        let gateway = match gateway_type {
+            GatewayType::Http { port } => Gateway::Http(HttpLocalGateway::new(port)),
+            GatewayType::Tcp { port } => Gateway::Tcp(TcpGateway::new(port)),
         };
 
         Ok(Self {
-            gateway: gateway,
-            context: context,
+            context: GatewayContext {
+                arduino,
+                ble,
+                thingblock,
+            },
+            gateway,
         })
     }
 
-    fn serve(&self) {
-        self.gateway.serve(&self.context);
+    pub fn arduino(&self) -> Arc<ArduinoHandler> {
+        self.context.arduino.clone()
+    }
+
+    pub async fn serve(&self) -> Result<()> {
+        let context = self.context.clone();
+        match &self.gateway {
+            Gateway::Http(gateway) => gateway.serve(context).await,
+            Gateway::Tcp(gateway) => gateway.serve(context).await,
+        }
     }
 }

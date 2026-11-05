@@ -1,5 +1,5 @@
 //! A minimal self-cleaning temp directory for scratch space (materialized sketches and their
-//! build output), avoiding a temp-file crate dependency.
+//! build output).
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -15,8 +15,7 @@ pub struct TempDir {
 }
 
 impl TempDir {
-    /// Creates `<os-temp>/<prefix>-<pid>-<nanos>-<seq>`; the pid/nanos/seq triple keeps the
-    /// name unique across processes and concurrent callers.
+    /// Creates `<os-temp>/<prefix>-<pid>-<nanos>-<seq>`.
     pub fn new(prefix: &str) -> std::io::Result<Self> {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

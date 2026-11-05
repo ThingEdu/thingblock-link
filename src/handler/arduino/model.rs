@@ -1,5 +1,4 @@
-//! Arduino data types the handler produces and consumes. Shared by every gateway's wire model,
-//! so none of them belongs to one transport.
+//! Arduino data types the handler produces and consumes, shared by every gateway's wire model.
 
 use serde::{Deserialize, Serialize};
 
@@ -9,11 +8,8 @@ use serde::{Deserialize, Serialize};
 pub struct Artifact {
     pub format: String,
     pub path: String,
-    /// Base64 bytes, set only by the cloud server since its browser caller can't read `path`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub data: Option<String>,
     /// Separately addressed images an ESP flash needs (bootloader, partitions, boot_app0, app).
-    /// Empty for single-image targets like AVR, whose Intel HEX carries its own addresses.
+    /// Empty for single-image targets like AVR.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parts: Vec<ArtifactPart>,
 }
@@ -24,11 +20,7 @@ pub struct Artifact {
 pub struct ArtifactPart {
     /// Flash offset, e.g. `0x10000` for the app image.
     pub offset: u32,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub path: String,
-    /// Base64 bytes, filled in by the cloud server (see [`Artifact::data`]).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub data: Option<String>,
 }
 
 /// Install status of a boards platform, returned by the HTTP `/api/platforms` routes.
@@ -52,8 +44,7 @@ pub struct ConnectionTarget {
     pub label: String,
 }
 
-/// The `compile` request's `options`, tolerant by design: every field defaults and unknown keys
-/// are ignored, so an unexpected shape from the editor degrades to a plain compile.
+/// The `compile` request's `options`: every field defaults and unknown keys are ignored.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct CompileOptions {

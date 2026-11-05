@@ -1,5 +1,5 @@
-//! The BLE handler: the only module allowed to name `btleplug` types, so the `/io` session only
-//! sees plain data or opaque wrappers (the role `arduino::grpc` plays for arduino-cli).
+//! The BLE handler: the only module that names `btleplug` types; callers see plain data or
+//! opaque wrappers.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -14,14 +14,12 @@ use uuid::Uuid;
 
 use crate::error::{Error, Result};
 
-/// The app-wide BLE radio, shared by every session so all scan/connect through one adapter.
+/// The app-wide BLE radio, shared by every session.
 pub struct BleHandler {
     adapter: Adapter,
-    /// Every peripheral seen by `scan`, keyed by string id: `PeripheralId` can't be rebuilt
-    /// from the string sent to the browser, so `connect` looks it up here.
+    /// Every peripheral seen by `scan`, keyed by string id, for `connect` to look up.
     discovered: Mutex<HashMap<String, Peripheral>>,
-    /// Scanning is adapter-global; `release_scan` only stops the adapter if its generation is
-    /// current, so a stale scan's cleanup can't kill its replacement.
+    /// Generation of the current scan; `release_scan` stops the adapter only for this one.
     scan_generation: AsyncMutex<u64>,
 }
 
@@ -33,8 +31,7 @@ pub struct Device {
     pub rssi: Option<i16>,
 }
 
-/// A live connection to one peripheral. Cheap to clone (`Peripheral` is a handle onto shared
-/// state), so the session hands clones to its notification pump.
+/// A live connection to one peripheral. Cheap to clone.
 #[derive(Clone)]
 pub struct Conn {
     peripheral: Peripheral,
@@ -47,8 +44,8 @@ pub struct Notification {
 }
 
 impl BleHandler {
-    /// Opens the first Bluetooth adapter. `Ok(None)` means no BLE radio, a normal condition
-    /// (e.g. a desktop without Bluetooth); only adapter-subsystem failures are `Err`.
+    /// Opens the first Bluetooth adapter. `Ok(None)` means no BLE radio; only adapter-subsystem
+    /// failures are `Err`.
     pub async fn discover() -> Result<Option<BleHandler>> {
         let manager = Manager::new().await?;
         let mut adapters = manager.adapters().await?;
@@ -64,7 +61,7 @@ impl BleHandler {
     }
 
     /// Starts a scan, returning its generation (for `release_scan`) and an owned stream of
-    /// matching devices, each cached for `connect`, so a spawned task can own the stream.
+    /// matching devices, each cached for `connect`.
     pub async fn scan(
         self: Arc<Self>,
         services: Vec<Uuid>,
@@ -128,7 +125,7 @@ impl BleHandler {
     }
 
     /// Stops the scan started under `generation` if it is still current; a stale generation is
-    /// a no-op, so releasing a finished scan never stops its replacement.
+    /// a no-op.
     pub async fn release_scan(&self, generation: u64) -> Result<()> {
         let current = self.scan_generation.lock().await;
         if *current == generation {
@@ -137,8 +134,8 @@ impl BleHandler {
         Ok(())
     }
 
-    /// Streams ids of peripherals that disconnect unexpectedly. `events()` is broadcast-backed,
-    /// so this runs alongside a concurrent scan without either stream missing events.
+    /// Streams ids of peripherals that disconnect unexpectedly. Runs alongside a concurrent scan
+    /// without either stream missing events.
     pub async fn disconnect_events(&self) -> Result<impl Stream<Item = String> + Send + 'static> {
         let events = self.adapter.events().await?;
         Ok(events.filter_map(|event| async move {
@@ -149,8 +146,7 @@ impl BleHandler {
         }))
     }
 
-    /// Connects to a peripheral from a prior scan and discovers its services, so `Conn`'s
-    /// characteristic lookups have something to search.
+    /// Connects to a peripheral from a prior scan and discovers its services.
     pub async fn connect(&self, id: &str) -> Result<Conn> {
         let peripheral = {
             let discovered = self.discovered.lock().expect("discovered mutex");
@@ -169,8 +165,7 @@ impl BleHandler {
 }
 
 impl Conn {
-    /// Writes `data` to a characteristic identified by service + characteristic UUID, so
-    /// callers never hold a `btleplug` handle.
+    /// Writes `data` to a characteristic identified by service + characteristic UUID.
     pub async fn write(
         &self,
         service: Uuid,
@@ -209,8 +204,7 @@ impl Conn {
         Ok(())
     }
 
-    /// One owned stream of every notification on this connection, mirroring `btleplug`'s single
-    /// multiplexed stream; `'static` so a spawned pump task can own it.
+    /// One owned, `'static` stream of every notification on this connection.
     pub async fn notifications(&self) -> Result<impl Stream<Item = Notification> + Send + 'static> {
         let stream = self.peripheral.notifications().await?;
         Ok(stream.map(|notification| Notification {

@@ -1,24 +1,20 @@
 //! System-tray status/quit UI and the helper's main-thread event loop. The async side
 //! (daemon + WS server) talks to the loop only through its `EventLoopProxy`.
 
-use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use tao::event::{Event, StartCause, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
-use tokio::net::TcpListener;
 use tokio::runtime::Runtime;
 use tracing::{error, info, warn};
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 use crate::ui::window::{self, StatusView, StatusWindow, Telemetry};
+use thingblock_link::gateway::{GatewayType, LinkConfig, ThingblockLink};
 use thingblock_link::handler::arduino::ArduinoHandler;
-use thingblock_link::handler::thingblock::ThingblockHandler;
-use thingblock_link::handler::thingblock::resource::ResourceRoot;
-use thingblock_link::server;
 
 /// How often the status window's board-count / health rows are refreshed.
 const TELEMETRY_INTERVAL: Duration = Duration::from_secs(3);
@@ -67,8 +63,7 @@ impl Status {
     }
 }
 
-/// Events that wake the loop. The async side and menu clicks both funnel through here
-/// so the loop can idle on `ControlFlow::Wait` instead of busy-polling.
+/// Events that wake the loop, from the async side and from menu clicks.
 enum UserEvent {
     Status(Status),
     Telemetry(Telemetry),
@@ -77,8 +72,7 @@ enum UserEvent {
     Quit,
 }
 
-/// Tray handles kept alive for the loop's lifetime: the status item so its text can be
-/// updated, the menu ids to match clicks against.
+/// Tray handles kept alive for the loop's lifetime: the status item and the menu ids.
 struct Tray {
     _icon: TrayIcon,
     status_item: MenuItem,
@@ -87,7 +81,7 @@ struct Tray {
 }
 
 /// Runs the helper: spawns the services on `runtime`, then drives the tray event loop.
-/// Must be called on the main thread (tao/tray-icon requirement); exits the process on Quit.
+/// Must be called on the main thread; exits the process on Quit.
 pub fn run(
     runtime: Runtime,
     port: u16,
@@ -191,8 +185,7 @@ pub fn run(
     })
 }
 
-/// Quits on the desktop shell's shutdown signal: any stdin bytes or EOF. Stdin is portable
-/// (no OS signal is) and, unlike the WS server, can't get stuck behind request handling.
+/// Quits on the desktop shell's shutdown signal: any stdin bytes or EOF.
 async fn watch_stdin_for_shutdown(proxy: EventLoopProxy<UserEvent>) {
     use tokio::io::AsyncReadExt;
     let mut buf = [0u8; 64];
@@ -201,8 +194,7 @@ async fn watch_stdin_for_shutdown(proxy: EventLoopProxy<UserEvent>) {
     let _ = proxy.send_event(UserEvent::Quit);
 }
 
-/// Tears down the helper and exits the loop. Dropping the runtime drops the last
-/// `Arc<ArduinoHandler>`, whose `kill_on_drop` reaps the arduino-cli daemon.
+/// Tears down the helper, killing the arduino-cli daemon, and exits the loop.
 fn shutdown(runtime: &mut Option<Runtime>, control_flow: &mut ControlFlow) {
     info!("quit requested; shutting down");
     if let Some(runtime) = runtime.take() {
@@ -212,7 +204,7 @@ fn shutdown(runtime: &mut Option<Runtime>, control_flow: &mut ControlFlow) {
 }
 
 /// Starts the daemon and serves the editor over WS, reporting lifecycle to the tray.
-/// On failure it reports `Failed` and returns; the process stays up so Quit still works.
+/// On failure it reports `Failed` and returns.
 async fn run_services(
     port: u16,
     resource_root: PathBuf,
@@ -222,30 +214,15 @@ async fn run_services(
 ) {
     let _ = proxy.send_event(UserEvent::Status(Status::Starting));
 
-    // Fail fast on a missing pack dir: it's a packaging error, and the editor can't load
-    // resources or compile vendored libs without it.
-    let thingblock = match ResourceRoot::new(&resource_root) {
-        Ok(root) => Arc::new(ThingblockHandler::new(root)),
-        Err(e) => {
-            error!(error = %e, path = %resource_root.display(), "resource root invalid");
-            let _ = proxy.send_event(UserEvent::Status(Status::Failed(e.to_string())));
-            return;
-        }
+    let config = LinkConfig {
+        resource_root,
+        arduino_cli: cli_path,
+        config_dir,
     };
-
-    let arduino = match ArduinoHandler::start_with(cli_path, Some(config_dir)).await {
-        Ok(arduino) => Arc::new(arduino),
+    let link = match ThingblockLink::new(GatewayType::Http { port }, config).await {
+        Ok(link) => link,
         Err(e) => {
-            error!(error = %e, "daemon failed to start");
-            let _ = proxy.send_event(UserEvent::Status(Status::Failed(e.to_string())));
-            return;
-        }
-    };
-
-    let listener = match TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await {
-        Ok(listener) => listener,
-        Err(e) => {
-            error!(error = %e, port, "failed to bind WS port");
+            error!(error = %e, "helper failed to start");
             let _ = proxy.send_event(UserEvent::Status(Status::Failed(e.to_string())));
             return;
         }
@@ -253,10 +230,10 @@ async fn run_services(
 
     let _ = proxy.send_event(UserEvent::Status(Status::Running(port)));
 
-    tokio::spawn(poll_telemetry(arduino.clone(), proxy.clone()));
+    tokio::spawn(poll_telemetry(link.arduino(), proxy.clone()));
 
-    if let Err(e) = server::router::serve(listener, arduino, thingblock).await {
-        error!(error = %e, "ws server stopped");
+    if let Err(e) = link.serve().await {
+        error!(error = %e, "gateway stopped");
         let _ = proxy.send_event(UserEvent::Status(Status::Failed(e.to_string())));
     }
 }
@@ -287,7 +264,7 @@ async fn poll_telemetry(arduino: Arc<ArduinoHandler>, proxy: EventLoopProxy<User
 }
 
 /// Builds the tray icon and menu (status line, separator, Show Status, Quit). Panics on
-/// failure: the OS rejecting the tray is unrecoverable for this UI.
+/// failure.
 fn build_tray() -> Tray {
     let status_item = MenuItem::new(Status::Starting.label(), false, None);
     let show_item = MenuItem::new("Show Status", true, None);
@@ -318,7 +295,7 @@ fn build_tray() -> Tray {
 }
 
 /// The ThingBlock chip glyph as RGBA, the base for the per-status [`icon_for`] variants.
-/// Embedded at compile time so the binary stays self-contained.
+/// Embedded at compile time.
 fn glyph_rgba() -> image::RgbaImage {
     const PNG: &[u8] = include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -329,8 +306,8 @@ fn glyph_rgba() -> image::RgbaImage {
         .into_rgba8()
 }
 
-/// Tray icon for a status, a glanceable supplement to the menu line (see `assets/icon/DESIGN.md`):
-/// full color when running, 60% opacity when starting, error dot when failed.
+/// Tray icon for a status (see `assets/icon/DESIGN.md`): full color when running, 60% opacity
+/// when starting, error dot when failed.
 fn icon_for(status: &Status) -> Icon {
     let mut image = glyph_rgba();
     match status {

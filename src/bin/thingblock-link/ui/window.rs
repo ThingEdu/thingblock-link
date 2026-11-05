@@ -1,5 +1,5 @@
-//! Status window: a `wry` WebView showing live helper state. Ignorant of the tray's
-//! event type; Quit is wired through a host-supplied IPC callback, so no dependency on `tray`.
+//! Status window: a `wry` WebView showing live helper state. Quit is reported through a
+//! host-supplied IPC callback.
 
 use serde::Serialize;
 use tao::dpi::LogicalSize;
@@ -9,8 +9,8 @@ use tracing::warn;
 use wry::http::Request;
 use wry::{WebView, WebViewBuilder};
 
-/// Lifecycle snapshot for the status row, mirroring the tray's `Status`.
-/// JSON shape is a contract with `assets/status_dialog.html`'s `__status` handler.
+/// Lifecycle snapshot for the status row, mirroring the tray's `Status`, serialized for
+/// `assets/status_dialog.html`'s `__status` handler.
 #[derive(Clone, Serialize)]
 pub struct StatusView {
     /// `"starting"`, `"running"`, or `"failed"`.
@@ -45,8 +45,7 @@ impl StatusWindow {
         self.window.set_focus();
     }
 
-    /// Hides rather than destroys on close, so reopen is instant and the webview keeps its
-    /// state; closing the window must not stop the helper.
+    /// Hides the window without destroying it.
     pub fn hide(&self) {
         self.window.set_visible(false);
     }
@@ -74,7 +73,7 @@ impl StatusWindow {
 }
 
 /// Builds the status window painted with the given initial state. `on_ipc` receives each
-/// `window.ipc.postMessage` body (just `"quit"`); generic over `T` so it needn't know the loop.
+/// `window.ipc.postMessage` body (just `"quit"`).
 pub fn build<T: 'static>(
     target: &EventLoopWindowTarget<T>,
     on_ipc: impl Fn(String) + 'static,
@@ -97,8 +96,7 @@ pub fn build<T: 'static>(
     StatusWindow { webview, window }
 }
 
-/// Realizes the webview in the tao window. On GTK wry can't take the raw window handle
-/// (`UnsupportedWindowHandle`), so it builds into the window's vbox instead.
+/// Realizes the webview in the tao window; on GTK it builds into the window's vbox.
 #[cfg(any(
     target_os = "linux",
     target_os = "dragonfly",
@@ -127,8 +125,7 @@ fn build_webview(builder: WebViewBuilder<'_>, window: &Window) -> WebView {
     builder.build(window).expect("build status webview")
 }
 
-/// Fills the embedded page template with the brand glyph and initial state, so the page
-/// paints correctly before any `evaluate_script` update arrives.
+/// Fills the embedded page template with the brand glyph and initial state.
 fn render_html(status: &StatusView, telemetry: Telemetry) -> String {
     const TEMPLATE: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),

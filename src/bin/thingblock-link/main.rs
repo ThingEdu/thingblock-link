@@ -9,10 +9,9 @@ mod tests;
 use std::path::PathBuf;
 
 use clap::Parser;
-use thingblock_link::error::Result;
 use ui::tray;
 
-/// WS port the editor connects to; a contract with the editor, overridable with `--port`.
+/// Default WS port the editor connects to, overridable with `--port`.
 const DEFAULT_WS_PORT: u16 = 3030;
 
 #[derive(Parser)]
@@ -47,7 +46,7 @@ fn default_resource_root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("thingblock-resource"))
 }
 
-fn main() -> Result<()> {
+fn main() -> std::io::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

@@ -5,28 +5,26 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 
-/// The directory of installed packs the helper serves. Single version: contents are pinned to
-/// the helper install, so no per-pack version is tracked.
+/// The directory of installed packs the helper serves. No per-pack version is tracked.
 #[derive(Debug)]
 pub struct ResourceRoot {
-    /// Canonicalized at construction, so the route gets a stable absolute path and later
-    /// resolution can trust the root exists.
+    /// Canonicalized at construction.
     root: PathBuf,
 }
 
 impl ResourceRoot {
-    /// Validates and canonicalizes the configured root, failing fast at startup if it is
-    /// missing or not a directory, so the route never serves a dangling or relative root.
+    /// Validates and canonicalizes the configured root, failing if it is missing or not a
+    /// directory.
     pub fn new(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         let root = path.canonicalize().map_err(|e| {
-            Error::Resource(format!(
+            Error::Thingblock(format!(
                 "resource root {} is unreadable: {e}",
                 path.display()
             ))
         })?;
         if !root.is_dir() {
-            return Err(Error::Resource(format!(
+            return Err(Error::Thingblock(format!(
                 "resource root {} is not a directory",
                 root.display()
             )));
@@ -34,8 +32,7 @@ impl ResourceRoot {
         Ok(Self { root })
     }
 
-    /// The canonical root for the static-file route. Left verbatim on Windows: only
-    /// `std::fs`-based consumers (`ServeDir`) read it.
+    /// The canonical root for the static-file route, left verbatim on Windows.
     pub fn path(&self) -> &Path {
         &self.root
     }
@@ -48,14 +45,14 @@ impl ResourceRoot {
             .join(pack)
             .join(lib)
             .canonicalize()
-            .map_err(|e| Error::Resource(format!("lib {pack}/{lib} is unreadable: {e}")))?;
+            .map_err(|e| Error::Thingblock(format!("lib {pack}/{lib} is unreadable: {e}")))?;
         if !dir.starts_with(&self.root) {
-            return Err(Error::Resource(format!(
+            return Err(Error::Thingblock(format!(
                 "lib {pack}/{lib} escapes the resource root"
             )));
         }
         if !dir.is_dir() {
-            return Err(Error::Resource(format!(
+            return Err(Error::Thingblock(format!(
                 "lib {pack}/{lib} is not a directory"
             )));
         }
@@ -65,21 +62,21 @@ impl ResourceRoot {
     }
 
     /// Resolves an untrusted `{pack, file}` firmware image for `flashFirmware`, with the same
-    /// containment rule. A file, since `import_file` reads siblings (bootloader etc.) by name.
+    /// containment rule.
     pub fn resolve_firmware_file(&self, pack: &str, file: &str) -> Result<PathBuf> {
         let path = self
             .root
             .join(pack)
             .join(file)
             .canonicalize()
-            .map_err(|e| Error::Resource(format!("firmware {pack}/{file} is unreadable: {e}")))?;
+            .map_err(|e| Error::Thingblock(format!("firmware {pack}/{file} is unreadable: {e}")))?;
         if !path.starts_with(&self.root) {
-            return Err(Error::Resource(format!(
+            return Err(Error::Thingblock(format!(
                 "firmware {pack}/{file} escapes the resource root"
             )));
         }
         if !path.is_file() {
-            return Err(Error::Resource(format!(
+            return Err(Error::Thingblock(format!(
                 "firmware {pack}/{file} is not a file"
             )));
         }

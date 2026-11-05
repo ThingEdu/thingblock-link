@@ -8,7 +8,7 @@ pub struct HttpRequest {
 
 pub enum HttpRequestBody {}
 
-/// A route's JSON response. Serializes just the body, so the wrapper adds no nesting.
+/// A route's JSON response, serialized as just the body.
 #[derive(Debug, Serialize)]
 #[serde(transparent)]
 pub struct HttpResponse {

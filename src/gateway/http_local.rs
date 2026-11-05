@@ -4,22 +4,23 @@ mod router;
 
 use tower_http::cors::{Any, CorsLayer};
 
-use crate::gateway::Gateway;
+use crate::{error::Result, gateway::GatewayContext};
 
-pub struct HttpLocalGateway {}
-
-impl HttpLocalGateway {
-    fn new() -> Self {
-        HttpLocalGateway {}
-    }
+pub struct HttpLocalGateway {
+    port: u16,
 }
 
-impl Gateway for HttpLocalGateway {
-    fn serve(context: super::GatewayContext) {
-        let cors = CorsLayer::new()
+impl HttpLocalGateway {
+    pub(crate) fn new(port: u16) -> Self {
+        HttpLocalGateway { port }
+    }
+
+    pub(crate) async fn serve(&self, _context: GatewayContext) -> Result<()> {
+        let _cors = CorsLayer::new()
             .allow_origin(tower_http::cors::AllowOrigin::mirror_request())
             .allow_methods(Any)
             .allow_headers(Any)
             .allow_private_network(true);
+        Ok(())
     }
 }

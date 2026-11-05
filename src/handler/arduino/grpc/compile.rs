@@ -1,5 +1,5 @@
 //! `Compile` translation backing WS `compile`: maps arduino-cli's stream to [`CompileEvent`]s
-//! and locates the flashable binary in the build dir, since the result carries only its path.
+//! and locates the flashable binary in the build dir.
 
 use std::path::{Path, PathBuf};
 
@@ -76,7 +76,7 @@ fn into_events(
                     }
                 }
                 Ok(None) => return None,
-                Err(status) => return Some((Err(Error::Grpc(status)), (stream, true))),
+                Err(status) => return Some((Err(Error::from(status)), (stream, true))),
             }
         }
     })
@@ -102,7 +102,7 @@ fn translate(resp: cli::CompileResponse) -> Option<Result<CompileEvent>> {
         Message::Result(result) => {
             match find_artifact(Path::new(&result.build_path), &result.build_properties) {
                 Some(artifact) => Some(Ok(CompileEvent::Done(artifact))),
-                None => Some(Err(Error::Daemon(format!(
+                None => Some(Err(Error::Arduino(format!(
                     "compile produced no flashable artifact in {}",
                     result.build_path
                 )))),
@@ -112,7 +112,7 @@ fn translate(resp: cli::CompileResponse) -> Option<Result<CompileEvent>> {
 }
 
 /// Finds the flashable binary in a build dir, preferring AVR `.ino.hex` over ESP `.ino.bin`.
-/// The `.ino.<ext>` suffix deliberately skips merged variants like `*.ino.with_bootloader.hex`.
+/// The `.ino.<ext>` suffix match skips merged variants like `*.ino.with_bootloader.hex`.
 pub fn find_artifact(build_path: &Path, build_properties: &[String]) -> Option<Artifact> {
     for ext in ["hex", "bin"] {
         if let Some(path) = find_binary(build_path, ext) {
@@ -124,7 +124,6 @@ pub fn find_artifact(build_path: &Path, build_properties: &[String]) -> Option<A
             return Some(Artifact {
                 format: ext.to_string(),
                 path: path.to_string_lossy().into_owned(),
-                data: None,
                 parts,
             });
         }
@@ -133,13 +132,13 @@ pub fn find_artifact(build_path: &Path, build_properties: &[String]) -> Option<A
 }
 
 /// The four images an ESP flash needs, at the core's `merge-bin` offsets (bootloader's varies by
-/// chip). Empty if any image is missing, so the app is flashed alone.
+/// chip). Empty if any image is missing.
 fn esp_parts(build_path: &Path, app: &Path, build_properties: &[String]) -> Vec<ArtifactPart> {
     esp_parts_inner(build_path, app, build_properties).unwrap_or_default()
 }
 
 /// Builds the ESP image list; the bootloader offset comes from `build.bootloader_addr`
-/// (`0x0` on RISC-V, `0x1000` on classic ESP32) rather than a per-chip table.
+/// (`0x0` on RISC-V, `0x1000` on classic ESP32).
 fn esp_parts_inner(
     build_path: &Path,
     app: &Path,
@@ -173,7 +172,6 @@ fn esp_parts_inner(
             .map(|(offset, path)| ArtifactPart {
                 offset,
                 path: path.to_string_lossy().into_owned(),
-                data: None,
             })
             .collect(),
     )

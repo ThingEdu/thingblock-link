@@ -62,8 +62,8 @@ impl Client {
     }
 }
 
-/// Maps a `PlatformSummary` to [`PlatformInfo`]. The display name lives on a release,
-/// so it prefers the latest, then the installed one, then the id.
+/// Maps a `PlatformSummary` to [`PlatformInfo`], taking the display name from the latest
+/// release, then the installed one, then the id.
 fn to_status(summary: cli::PlatformSummary) -> PlatformInfo {
     let metadata = summary.metadata.unwrap_or_default();
     let name = summary
@@ -107,7 +107,7 @@ fn into_events(
                         }
                     }
                     Ok(None) => return None,
-                    Err(status) => return Some((Err(Error::Grpc(status)), (stream, true, phase))),
+                    Err(status) => return Some((Err(Error::from(status)), (stream, true, phase))),
                 }
             }
         },
@@ -162,7 +162,7 @@ fn translate_download(
         Message::Update(_) => None,
         Message::End(end) if end.success => (!end.message.is_empty())
             .then(|| Ok(PlatformInstallEvent::Log(format!("{}\n", end.message)))),
-        Message::End(end) => Some(Err(Error::Daemon(if end.message.is_empty() {
+        Message::End(end) => Some(Err(Error::Arduino(if end.message.is_empty() {
             format!("download of {phase} failed")
         } else {
             end.message

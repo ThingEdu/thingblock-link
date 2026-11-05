@@ -1,5 +1,5 @@
-//! Pins the status window's JSON payloads, which go straight into `evaluate_script` and are
-//! a contract with `assets/status_dialog.html` (field names and the `state` strings it switches on).
+//! Pins the status window's JSON payloads: the field names and `state` strings
+//! `assets/status_dialog.html` reads.
 
 use crate::ui::window::{StatusView, Telemetry};
 

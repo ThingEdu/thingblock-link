@@ -1,5 +1,5 @@
 //! Thin wrapper over the generated arduino-cli gRPC client, with one submodule per RPC.
-//! Keeps the arduino-cli schema contained: nothing past this module sees its types.
+//! Nothing outside this module sees the arduino-cli schema types.
 
 use tonic::transport::Channel;
 
@@ -10,7 +10,7 @@ pub mod platform;
 pub mod upload;
 
 /// The tonic code `build.rs` generates (protox + tonic into `OUT_DIR`), mirroring the proto
-/// packages. Lints are silenced because generated code is not ours to clean up.
+/// packages.
 #[allow(clippy::all, clippy::pedantic)]
 pub mod pb {
     include!(concat!(env!("OUT_DIR"), "/mod.rs"));

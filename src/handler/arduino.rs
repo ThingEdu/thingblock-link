@@ -23,24 +23,23 @@ const CONNECT_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Handle to the running arduino-cli daemon and its initialized gRPC instance.
 pub struct ArduinoHandler {
-    /// Held only so `kill_on_drop` kills the daemon with us.
+    /// The daemon process, killed when this handler drops.
     _child: Child,
     channel: Channel,
     instance: cli::Instance,
-    /// Serializes platform installs across sessions: they mutate the shared data dir and then
-    /// reinit, so they can't run concurrently. `Arc` so an owned guard can move into the task.
+    /// Serializes platform installs across sessions.
     install_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
 }
 
 impl ArduinoHandler {
-    /// [`Self::start_with`] without a config dir, so arduino-cli uses its defaults
+    /// [`Self::start_with`] without a config dir: arduino-cli uses its defaults
     /// (`~/.arduino15`). Used by tests.
     pub async fn start(cli_path: Option<PathBuf>) -> Result<Self> {
         Self::start_with(cli_path, None).await
     }
 
     /// Spawns `arduino-cli daemon` on a free port, dials it and runs `Create` + `Init`. With
-    /// `config_dir`, cwd is set there so the config's relative `directories.*` paths resolve.
+    /// `config_dir`, the daemon uses its `arduino-cli.yaml` and runs with it as cwd.
     pub async fn start_with(
         cli_path: Option<PathBuf>,
         config_dir: Option<PathBuf>,
@@ -60,7 +59,7 @@ impl ArduinoHandler {
         if let Some(dir) = config_dir {
             let config_file = dir.join("arduino-cli.yaml");
             if !config_file.is_file() {
-                return Err(Error::Daemon(format!(
+                return Err(Error::Arduino(format!(
                     "config file not found: {}",
                     config_file.display()
                 )));
@@ -75,7 +74,7 @@ impl ArduinoHandler {
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true)
             .spawn()
-            .map_err(|e| Error::Daemon(format!("spawn {}: {e}", cli_path.display())))?;
+            .map_err(|e| Error::Arduino(format!("spawn {}: {e}", cli_path.display())))?;
 
         forward_daemon_output(&mut child);
 
@@ -91,15 +90,14 @@ impl ArduinoHandler {
         })
     }
 
-    /// Re-runs `Init` so the daemon reloads its data dir. Must run after a platform install, or
-    /// the instance won't see the new core and the next compile fails.
+    /// Re-runs `Init` to reload the daemon's data dir. Must run after a platform install.
     pub async fn reinit(&self) -> Result<()> {
         let mut client =
             cli::arduino_core_service_client::ArduinoCoreServiceClient::new(self.channel.clone());
         drain_init(&mut client, self.instance).await
     }
 
-    /// `try_lock_owned` on this yields a guard that can move into the install task.
+    /// The shared platform-install lock.
     pub fn install_lock(&self) -> std::sync::Arc<tokio::sync::Mutex<()>> {
         self.install_lock.clone()
     }
@@ -123,14 +121,14 @@ fn resolve_cli_path(override_path: Option<PathBuf>) -> PathBuf {
     override_path.unwrap_or_else(bundled_cli_path)
 }
 
-/// Dev default config dir: the crate root, where `arduino-cli.yaml` and the `data/` bundle live,
-/// so `cargo run` works in-tree. Packaged builds pass `--config-dir` instead.
+/// Dev default config dir: the crate root, where `arduino-cli.yaml` and the `data/` bundle live.
+/// Packaged builds pass `--config-dir` instead.
 pub fn default_config_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// Dev default: the arduino-cli vendored in `arduino-cli-binaries/`, so `cargo run` works in-tree.
-/// Packaged builds pass `--arduino-cli` instead.
+/// Dev default: the arduino-cli vendored in `arduino-cli-binaries/`. Packaged builds pass
+/// `--arduino-cli` instead.
 fn bundled_cli_path() -> PathBuf {
     let (dir, exe) = if cfg!(target_os = "windows") {
         ("arduino-cli_win_64bit", "arduino-cli.exe")
@@ -148,14 +146,14 @@ fn bundled_cli_path() -> PathBuf {
         .join(exe)
 }
 
-/// Grabs an OS-assigned free loopback port and releases it for the daemon to bind. The race
-/// before the daemon binds is acceptable for a localhost helper.
+/// Grabs an OS-assigned free loopback port and releases it for the daemon to bind.
 fn pick_free_port() -> Result<u16> {
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    Ok(listener.local_addr()?.port())
+    let free_port_err = |e| Error::Arduino(format!("pick free daemon port: {e}"));
+    let listener = TcpListener::bind("127.0.0.1:0").map_err(free_port_err)?;
+    Ok(listener.local_addr().map_err(free_port_err)?.port())
 }
 
-/// Pumps the daemon's stdout/stderr into `tracing` so its logs are visible.
+/// Pumps the daemon's stdout/stderr into `tracing`.
 fn forward_daemon_output(child: &mut Child) {
     if let Some(stdout) = child.stdout.take() {
         tokio::spawn(async move {
@@ -178,7 +176,7 @@ fn forward_daemon_output(child: &mut Child) {
 /// Dials the daemon, retrying until it's listening or `CONNECT_TIMEOUT` elapses.
 async fn connect_with_retry(port: u16) -> Result<Channel> {
     let endpoint = Channel::from_shared(format!("http://127.0.0.1:{port}"))
-        .map_err(|e| Error::Daemon(format!("invalid daemon endpoint: {e}")))?;
+        .map_err(|e| Error::Arduino(format!("invalid daemon endpoint: {e}")))?;
 
     let deadline = Instant::now() + CONNECT_TIMEOUT;
     loop {
@@ -186,7 +184,7 @@ async fn connect_with_retry(port: u16) -> Result<Channel> {
             Ok(channel) => return Ok(channel),
             Err(e) => {
                 if Instant::now() >= deadline {
-                    return Err(Error::Daemon(format!(
+                    return Err(Error::Arduino(format!(
                         "daemon not reachable on port {port}: {e}"
                     )));
                 }
@@ -205,14 +203,14 @@ async fn handshake(channel: Channel) -> Result<cli::Instance> {
         .await?
         .into_inner()
         .instance
-        .ok_or_else(|| Error::Daemon("Create returned no instance".into()))?;
+        .ok_or_else(|| Error::Arduino("Create returned no instance".into()))?;
 
     drain_init(&mut client, instance).await?;
     Ok(instance)
 }
 
 /// Runs `Init` on `instance` and drains its stream. Per-item errors (e.g. a missing index) are
-/// only logged, since the instance still comes up usable.
+/// only logged.
 async fn drain_init(
     client: &mut cli::arduino_core_service_client::ArduinoCoreServiceClient<Channel>,
     instance: cli::Instance,

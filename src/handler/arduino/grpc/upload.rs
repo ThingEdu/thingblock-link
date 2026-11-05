@@ -1,5 +1,5 @@
-//! `Upload` translation backing WS `upload`. `UploadResponse` has no structured progress: the
-//! tool's `####` progress arrives as log text, so an upload yields only `Log`s and a `Done`.
+//! `Upload` translation backing WS `upload`. An upload yields only `Log`s (the tool's `####`
+//! progress included) and a `Done`.
 
 use futures::Stream;
 use tonic::Streaming;
@@ -31,8 +31,8 @@ impl Client {
     }
 }
 
-/// Builds the `UploadRequest`; `import_file` flashes a prebuilt binary, overriding `sketch_path`.
-/// The WS payload carries only a port address, so the protocol is `serial` for local USB boards.
+/// Builds the `UploadRequest`: `import_file` flashes a prebuilt binary, overriding
+/// `sketch_path`, and the port protocol is always `serial`.
 pub fn build_request(
     instance: cli::Instance,
     fqbn: &str,
@@ -74,7 +74,7 @@ fn into_events(stream: Streaming<cli::UploadResponse>) -> impl Stream<Item = Res
                     }
                 }
                 Ok(None) => return None,
-                Err(status) => return Some((Err(Error::Grpc(status)), (stream, true))),
+                Err(status) => return Some((Err(Error::from(status)), (stream, true))),
             }
         }
     })
