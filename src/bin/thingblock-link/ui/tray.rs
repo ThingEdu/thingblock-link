@@ -13,8 +13,8 @@ use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 use crate::ui::window::{self, StatusView, StatusWindow, Telemetry};
-use thingblock_link::gateway::{GatewayType, LinkConfig, ThingblockLink};
 use thingblock_link::service::arduino::ArduinoService;
+use thingblock_link::{LinkConfig, ThingblockLink, gateway::GatewayType};
 
 /// How often the status window's board-count / health rows are refreshed.
 const TELEMETRY_INTERVAL: Duration = Duration::from_secs(3);
