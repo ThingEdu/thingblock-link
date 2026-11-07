@@ -11,14 +11,14 @@ use crate::gateway::http_local::model::{HttpResponse, HttpResponseBody};
 
 type HttpError = (StatusCode, HttpResponse);
 
-/// `GET /api/platforms`: every indexed platform with its install status.
+/// `GET /api/platforms`: every supported platform with its install status.
 pub async fn list_platforms(
     State(context): State<GatewayContext>,
 ) -> Result<HttpResponse, HttpError> {
     let platforms = context
         .arduino
         .client()
-        .platform_search("")
+        .platform_list()
         .await
         .map_err(|e| error(StatusCode::BAD_GATEWAY, "daemonError", e))?;
     Ok(HttpResponse::new(HttpResponseBody::ArduinoListPlatforms {
@@ -26,7 +26,7 @@ pub async fn list_platforms(
     }))
 }
 
-/// `GET /api/platforms/{id}`: one platform's install status by exact id (e.g. `esp32:esp32`).
+/// `GET /api/platforms/{id}`: one supported platform's install status by id (e.g. `esp32:esp32`).
 pub async fn platform_status(
     State(context): State<GatewayContext>,
     Path(id): Path<String>,
@@ -34,11 +34,10 @@ pub async fn platform_status(
     let platforms = context
         .arduino
         .client()
-        .platform_search("")
+        .platform_list()
         .await
         .map_err(|e| error(StatusCode::BAD_GATEWAY, "daemonError", e))?;
 
-    // Exact match on the full list: arduino-cli's search query is fuzzy.
     match platforms.into_iter().find(|platform| platform.id == id) {
         Some(platform) => Ok(HttpResponse::new(HttpResponseBody::ArduinoPlatform(
             platform,

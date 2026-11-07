@@ -8,6 +8,32 @@ use crate::error::{Error, Result};
 use crate::service::arduino::grpc::{Client, cli};
 use crate::service::arduino::model::PlatformInfo;
 
+/// Thingblock Link supported installed platforms
+#[derive(Debug)]
+pub enum Platform {
+    AVR,
+    ESP32,
+}
+
+impl Platform {
+    pub const ALL: [Platform; 2] = [Platform::AVR, Platform::ESP32];
+
+    /// `(package, architecture)`, e.g. `("esp32", "esp32")`.
+    fn id(&self) -> (&'static str, &'static str) {
+        match self {
+            Platform::AVR => ("arduino", "avr"),
+            Platform::ESP32 => ("esp32", "esp32"),
+        }
+    }
+
+    pub fn version(&self) -> &'static str {
+        match self {
+            Platform::AVR => "",
+            Platform::ESP32 => "3.3.11",
+        }
+    }
+}
+
 /// One translated step of a platform install, in the helper's own shapes.
 #[derive(Debug)]
 pub enum PlatformInstallEvent {
@@ -21,32 +47,53 @@ pub enum PlatformInstallEvent {
 }
 
 impl Client {
-    /// Searches the package indexes for platforms matching `query` (empty matches all),
-    /// each with its install status.
-    pub async fn platform_search(&mut self, query: &str) -> Result<Vec<PlatformInfo>> {
+    /// Lists every supported [`Platform`] with its install status.
+    pub async fn platform_list(&mut self) -> Result<Vec<PlatformInfo>> {
         let instance = *self.instance();
         let response = self
             .inner()
             .platform_search(cli::PlatformSearchRequest {
                 instance: Some(instance),
-                search_args: query.to_string(),
+                search_args: String::new(),
                 manually_installed: false,
             })
             .await?
             .into_inner();
 
-        Ok(response.search_output.into_iter().map(to_status).collect())
+        let mut summaries = response.search_output;
+        // One entry per supported platform; one missing from the indexes is not installed.
+        Ok(Platform::ALL
+            .iter()
+            .map(|platform| {
+                let (package, architecture) = platform.id();
+                let id = format!("{package}:{architecture}");
+                let found = summaries
+                    .iter()
+                    .position(|s| s.metadata.as_ref().is_some_and(|m| m.id == id));
+                match found {
+                    Some(index) => to_status(summaries.swap_remove(index)),
+                    None => PlatformInfo {
+                        name: id.clone(),
+                        id,
+                        installed: false,
+                        installed_version: None,
+                        latest_version: None,
+                    },
+                }
+            })
+            .collect())
     }
 
     /// Installs a platform (download, extract, post-install), streaming translated events.
-    /// An empty `version` means the latest indexed release.
     pub async fn platform_install(
         &mut self,
-        package: &str,
-        architecture: &str,
-        version: &str,
+        platform: Platform,
     ) -> Result<impl Stream<Item = Result<PlatformInstallEvent>>> {
         let instance = *self.instance();
+
+        let (package, architecture) = platform.id();
+        let version = platform.version();
+
         let request = cli::PlatformInstallRequest {
             instance: Some(instance),
             platform_package: package.to_string(),
