@@ -12,16 +12,22 @@ use crate::service::arduino::model::PlatformInfo;
 #[derive(Debug)]
 pub enum Platform {
     AVR,
+    #[cfg(with_esp32)]
     ESP32,
 }
 
 impl Platform {
-    pub const ALL: [Platform; 2] = [Platform::AVR, Platform::ESP32];
+    pub const ALL: &[Platform] = &[
+        Platform::AVR,
+        #[cfg(with_esp32)]
+        Platform::ESP32,
+    ];
 
     /// `(package, architecture)`, e.g. `("esp32", "esp32")`.
     fn id(&self) -> (&'static str, &'static str) {
         match self {
             Platform::AVR => ("arduino", "avr"),
+            #[cfg(with_esp32)]
             Platform::ESP32 => ("esp32", "esp32"),
         }
     }
@@ -29,6 +35,7 @@ impl Platform {
     pub fn version(&self) -> &'static str {
         match self {
             Platform::AVR => "",
+            #[cfg(with_esp32)]
             Platform::ESP32 => "3.3.11",
         }
     }
