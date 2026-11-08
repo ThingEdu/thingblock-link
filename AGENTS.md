@@ -50,7 +50,6 @@ Use these unless the user asks otherwise:
 - **Commits** follow [Conventional Commits](https://www.conventionalcommits.org/). (This is a
   convention here, not a hook-enforced rule as in the thingblock-editor monorepo.)
 - Keep `Cargo.toml` sections (`dependencies`, etc.) in alphabetical order.
-- Design docs live in `.agents/docs/`.
 
 ## Before submitting changes
 
