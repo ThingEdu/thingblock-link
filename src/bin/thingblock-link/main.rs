@@ -9,10 +9,9 @@ mod tests;
 use std::path::PathBuf;
 
 use clap::Parser;
-use thingblock_link::error::Result;
 use ui::tray;
 
-/// WS port the editor connects to; a contract with the editor, overridable with `--port`.
+/// Default WS port the editor connects to, overridable with `--port`.
 const DEFAULT_WS_PORT: u16 = 3030;
 
 #[derive(Parser)]
@@ -47,7 +46,7 @@ fn default_resource_root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("thingblock-resource"))
 }
 
-fn main() -> Result<()> {
+fn main() -> std::io::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -60,7 +59,7 @@ fn main() -> Result<()> {
     let resource_root = args.resource_root.unwrap_or_else(default_resource_root);
     let config_dir = args
         .config_dir
-        .unwrap_or_else(thingblock_link::service::arduino::daemon::default_config_dir);
+        .unwrap_or_else(thingblock_link::service::arduino::default_config_dir);
 
     // tao's event loop must own the main thread, so services run on this runtime and the
     // tray takes over; `tray::run` never returns, the process exits from its loop on Quit.

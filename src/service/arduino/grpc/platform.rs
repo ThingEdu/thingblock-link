@@ -2,11 +2,47 @@
 //! `PlatformInstall` backs WS `installPlatform`, which downloads a core (e.g. `esp32:esp32`).
 
 use futures::Stream;
+use serde::Deserialize;
 use tonic::Streaming;
 
 use crate::error::{Error, Result};
-use crate::server::protocol::PlatformStatus;
 use crate::service::arduino::grpc::{Client, cli};
+use crate::service::arduino::model::PlatformInfo;
+
+/// Thingblock Link supported installed platforms
+#[derive(Debug, Deserialize)]
+pub enum Platform {
+    #[serde(rename = "arduino:avr")]
+    AVR,
+    #[cfg(with_esp32)]
+    #[serde(rename = "esp32:esp32")]
+    ESP32,
+}
+
+impl Platform {
+    pub const ALL: &[Platform] = &[
+        Platform::AVR,
+        #[cfg(with_esp32)]
+        Platform::ESP32,
+    ];
+
+    /// `(package, architecture)`, e.g. `("esp32", "esp32")`.
+    fn id(&self) -> (&'static str, &'static str) {
+        match self {
+            Platform::AVR => ("arduino", "avr"),
+            #[cfg(with_esp32)]
+            Platform::ESP32 => ("esp32", "esp32"),
+        }
+    }
+
+    pub fn version(&self) -> &'static str {
+        match self {
+            Platform::AVR => "",
+            #[cfg(with_esp32)]
+            Platform::ESP32 => "3.3.11",
+        }
+    }
+}
 
 /// One translated step of a platform install, in the helper's own shapes.
 #[derive(Debug)]
@@ -21,32 +57,53 @@ pub enum PlatformInstallEvent {
 }
 
 impl Client {
-    /// Searches the package indexes for platforms matching `query` (empty matches all),
-    /// each with its install status.
-    pub async fn platform_search(&mut self, query: &str) -> Result<Vec<PlatformStatus>> {
+    /// Lists every supported [`Platform`] with its install status.
+    pub async fn platform_list(&mut self) -> Result<Vec<PlatformInfo>> {
         let instance = *self.instance();
         let response = self
             .inner()
             .platform_search(cli::PlatformSearchRequest {
                 instance: Some(instance),
-                search_args: query.to_string(),
+                search_args: String::new(),
                 manually_installed: false,
             })
             .await?
             .into_inner();
 
-        Ok(response.search_output.into_iter().map(to_status).collect())
+        let mut summaries = response.search_output;
+        // One entry per supported platform; one missing from the indexes is not installed.
+        Ok(Platform::ALL
+            .iter()
+            .map(|platform| {
+                let (package, architecture) = platform.id();
+                let id = format!("{package}:{architecture}");
+                let found = summaries
+                    .iter()
+                    .position(|s| s.metadata.as_ref().is_some_and(|m| m.id == id));
+                match found {
+                    Some(index) => to_status(summaries.swap_remove(index)),
+                    None => PlatformInfo {
+                        name: id.clone(),
+                        id,
+                        installed: false,
+                        installed_version: None,
+                        latest_version: None,
+                    },
+                }
+            })
+            .collect())
     }
 
     /// Installs a platform (download, extract, post-install), streaming translated events.
-    /// An empty `version` means the latest indexed release.
     pub async fn platform_install(
         &mut self,
-        package: &str,
-        architecture: &str,
-        version: &str,
+        platform: Platform,
     ) -> Result<impl Stream<Item = Result<PlatformInstallEvent>>> {
         let instance = *self.instance();
+
+        let (package, architecture) = platform.id();
+        let version = platform.version();
+
         let request = cli::PlatformInstallRequest {
             instance: Some(instance),
             platform_package: package.to_string(),
@@ -62,9 +119,9 @@ impl Client {
     }
 }
 
-/// Maps a `PlatformSummary` to [`PlatformStatus`]. The display name lives on a release,
-/// so it prefers the latest, then the installed one, then the id.
-fn to_status(summary: cli::PlatformSummary) -> PlatformStatus {
+/// Maps a `PlatformSummary` to [`PlatformInfo`], taking the display name from the latest
+/// release, then the installed one, then the id.
+fn to_status(summary: cli::PlatformSummary) -> PlatformInfo {
     let metadata = summary.metadata.unwrap_or_default();
     let name = summary
         .releases
@@ -74,7 +131,7 @@ fn to_status(summary: cli::PlatformSummary) -> PlatformStatus {
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| metadata.id.clone());
 
-    PlatformStatus {
+    PlatformInfo {
         id: metadata.id,
         name,
         installed: !summary.installed_version.is_empty(),
@@ -107,7 +164,7 @@ fn into_events(
                         }
                     }
                     Ok(None) => return None,
-                    Err(status) => return Some((Err(Error::Grpc(status)), (stream, true, phase))),
+                    Err(status) => return Some((Err(Error::from(status)), (stream, true, phase))),
                 }
             }
         },
@@ -162,7 +219,7 @@ fn translate_download(
         Message::Update(_) => None,
         Message::End(end) if end.success => (!end.message.is_empty())
             .then(|| Ok(PlatformInstallEvent::Log(format!("{}\n", end.message)))),
-        Message::End(end) => Some(Err(Error::Daemon(if end.message.is_empty() {
+        Message::End(end) => Some(Err(Error::Arduino(if end.message.is_empty() {
             format!("download of {phase} failed")
         } else {
             end.message

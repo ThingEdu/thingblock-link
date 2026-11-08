@@ -32,5 +32,5 @@ tower-http = { version = "0.6", features = ["cors", "fs", "limit", "set-header"]
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tray-icon = "0.24"
-uuid = "1"
+uuid = { version = "1", features = ["serde"] }
 wry = "0.55"
