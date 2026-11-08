@@ -1,5 +1,6 @@
 mod handler;
-pub mod model;
+mod handler_ws;
+mod model;
 mod model_ws;
 mod router;
 

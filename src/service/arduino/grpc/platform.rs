@@ -2,6 +2,7 @@
 //! `PlatformInstall` backs WS `installPlatform`, which downloads a core (e.g. `esp32:esp32`).
 
 use futures::Stream;
+use serde::Deserialize;
 use tonic::Streaming;
 
 use crate::error::{Error, Result};
@@ -9,10 +10,12 @@ use crate::service::arduino::grpc::{Client, cli};
 use crate::service::arduino::model::PlatformInfo;
 
 /// Thingblock Link supported installed platforms
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub enum Platform {
+    #[serde(rename = "arduino:avr")]
     AVR,
     #[cfg(with_esp32)]
+    #[serde(rename = "esp32:esp32")]
     ESP32,
 }
 

@@ -1,14 +1,15 @@
-//! The local gateway's axum router: the HTTP API and the static `/resources` pack files.
+//! The local gateway's axum router: the HTTP API, the `/ws` editor socket and the static
+//! `/resources` pack files.
 
 use axum::Router;
 use axum::http::{HeaderValue, header};
-use axum::routing::get;
+use axum::routing::{any, get};
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
 
 use crate::gateway::GatewayContext;
-use crate::gateway::http_local::handler;
+use crate::gateway::http_local::{handler, handler_ws};
 
 /// Builds the router with every HTTP route, CORS, and `context` as shared state.
 pub fn router(context: GatewayContext) -> Router {
@@ -33,6 +34,7 @@ pub fn router(context: GatewayContext) -> Router {
         .route("/api/platforms", get(handler::list_platforms))
         .route("/api/platforms/{id}", get(handler::platform_status))
         .route("/api/boards", get(handler::list_boards))
+        .route("/ws", any(handler_ws::ws))
         .nest("/resources", resources)
         // Routes must be registered before this layer to inherit CORS/PNA.
         .layer(cors)
