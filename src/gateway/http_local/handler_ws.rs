@@ -1,5 +1,5 @@
-//! The `/ws` WebSocket session: reads `{id, type, payload}` requests from the editor, runs them
-//! against the arduino service, and streams responses back under the request's `id`.
+//! The `/ws/arduino` WebSocket session: reads `{id, type, payload}` requests from the editor,
+//! runs them against the arduino service, and streams responses back under the request's `id`.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -37,7 +37,7 @@ const BATCH_COOLDOWN: Duration = Duration::from_millis(100);
 /// How many monitor writes/close may queue toward the daemon.
 const MONITOR_COMMAND_CAPACITY: usize = 32;
 
-/// `GET /ws`: upgrades to WebSocket and runs one [`WsSession`] on the socket.
+/// `GET /ws/arduino`: upgrades to WebSocket and runs one [`WsSession`] on the socket.
 pub async fn ws(ws: WebSocketUpgrade, State(context): State<GatewayContext>) -> Response {
     ws.on_upgrade(move |socket| WsSession::new(context).run(socket))
 }

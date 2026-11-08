@@ -1,10 +1,10 @@
-# WebSocket protocol
+# Arduino WebSocket protocol
 
 The editor's long-lived channel to the helper for stateful and streaming work: binding a board,
 compiling, flashing, the serial monitor and platform installs. One-shot reads (platforms, board
 list) are on the [HTTP API](api.md).
 
-- **URL:** `ws://127.0.0.1:3030/ws` (port overridable with `--port`).
+- **URL:** `ws://127.0.0.1:3030/ws/arduino` (port overridable with `--port`).
 - **Frames:** text frames, one JSON message each. Binary frames are ignored.
 - **Session:** each socket is one session with its own connected port, serial monitor and
   in-flight requests. Closing the socket does a [`disconnect`](#disconnect).

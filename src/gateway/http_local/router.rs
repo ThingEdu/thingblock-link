@@ -1,5 +1,5 @@
-//! The local gateway's axum router: the HTTP API, the `/ws` editor socket and the static
-//! `/resources` pack files.
+//! The local gateway's axum router: the HTTP API, the `/ws/arduino` editor socket and the
+//! static `/resources` pack files.
 
 use axum::Router;
 use axum::http::{HeaderValue, header};
@@ -34,7 +34,7 @@ pub fn router(context: GatewayContext) -> Router {
         .route("/api/platforms", get(handler::list_platforms))
         .route("/api/platforms/{id}", get(handler::platform_status))
         .route("/api/boards", get(handler::list_boards))
-        .route("/ws", any(handler_ws::ws))
+        .route("/ws/arduino", any(handler_ws::ws))
         .nest("/resources", resources)
         // Routes must be registered before this layer to inherit CORS/PNA.
         .layer(cors)
