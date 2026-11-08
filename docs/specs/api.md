@@ -2,7 +2,7 @@
 
 One-shot reads and static pack files served by the local gateway. Streaming and stateful work
 (compile, upload, monitor, platform install) lives on the [Arduino WebSocket](ws-arduino.md)
-instead.
+instead, and Bluetooth on the [BLE WebSocket](ws-ble.md).
 
 - **Base URL:** `http://127.0.0.1:3030` (port overridable with `--port`; bound on localhost only).
 - **CORS:** the request `Origin` is mirrored, any method/header is allowed, and Private Network

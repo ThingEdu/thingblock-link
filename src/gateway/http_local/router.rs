@@ -1,5 +1,5 @@
-//! The local gateway's axum router: the HTTP API, the `/ws/arduino` editor socket and the
-//! static `/resources` pack files.
+//! The local gateway's axum router: the HTTP API, the `/ws/arduino` and `/ws/ble` editor
+//! sockets and the static `/resources` pack files.
 
 use axum::Router;
 use axum::http::{HeaderValue, header};
@@ -9,7 +9,7 @@ use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
 
 use crate::gateway::GatewayContext;
-use crate::gateway::http_local::{handler, handler_ws};
+use crate::gateway::http_local::{handler, handler_ble, handler_ws};
 
 /// Builds the router with every HTTP route, CORS, and `context` as shared state.
 pub fn router(context: GatewayContext) -> Router {
@@ -35,6 +35,7 @@ pub fn router(context: GatewayContext) -> Router {
         .route("/api/platforms/{id}", get(handler::platform_status))
         .route("/api/boards", get(handler::list_boards))
         .route("/ws/arduino", any(handler_ws::ws))
+        .route("/ws/ble", any(handler_ble::ws))
         .nest("/resources", resources)
         // Routes must be registered before this layer to inherit CORS/PNA.
         .layer(cors)
