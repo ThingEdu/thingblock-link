@@ -181,6 +181,7 @@ impl WsSession {
             }
             WsRequestBody::Disconnect {} => {
                 self.disconnect().await;
+                debug!(id = responder.id, "ws disconnect");
                 responder.send(WsResponseBody::Ok {}).await;
             }
             WsRequestBody::Compile {
