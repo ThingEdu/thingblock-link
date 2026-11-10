@@ -47,4 +47,4 @@ daemon. Use `RUST_LOG` (e.g. `RUST_LOG=thingblock_link=debug`) to set log verbos
 
 ## License
 
-MIT. See [`LICENSE`](LICENSE).
+AGPL-3.0-only (GNU Affero General Public License v3.0). See [`LICENSE`](LICENSE).
