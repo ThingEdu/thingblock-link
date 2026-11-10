@@ -26,7 +26,7 @@ pub struct ArduinoService {
     /// The daemon process, killed when this service drops.
     _child: Child,
     /// The daemon's stdin; it stays open while we run and closes when we die, which ends the daemon.
-    _stdin: Option<ChildStdin>,
+    _stdin: ChildStdin,
     channel: Channel,
     instance: cli::Instance,
     /// Serializes platform installs across sessions.
@@ -78,7 +78,7 @@ impl ArduinoService {
             .spawn()
             .map_err(|e| Error::Arduino(format!("spawn {}: {e}", cli_path.display())))?;
 
-        let stdin = child.stdin.take();
+        let stdin = child.stdin.take().expect("stdin is piped");
         forward_daemon_output(&mut child);
 
         let channel = connect_with_retry(port).await?;
