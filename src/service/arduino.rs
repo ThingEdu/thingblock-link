@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::{Child, Command};
+use tokio::process::{Child, ChildStdin, Command};
 use tonic::transport::Channel;
 use tracing::{debug, info, warn};
 
@@ -25,6 +25,8 @@ const CONNECT_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 pub struct ArduinoService {
     /// The daemon process, killed when this service drops.
     _child: Child,
+    /// The daemon's stdin; it stays open while we run and closes when we die, which ends the daemon.
+    _stdin: Option<ChildStdin>,
     channel: Channel,
     instance: cli::Instance,
     /// Serializes platform installs across sessions.
@@ -52,10 +54,7 @@ impl ArduinoService {
         command
             .arg("daemon")
             .arg("--port")
-            .arg(port.to_string())
-            // We own the lifecycle via `kill_on_drop`; without this arduino-cli's parent-death
-            // auto-terminate exits it seconds after binding, even while we're alive.
-            .arg("--daemonize");
+            .arg(port.to_string());
         if let Some(dir) = config_dir {
             let config_file = dir.join("arduino-cli.yaml");
             if !config_file.is_file() {
@@ -69,13 +68,17 @@ impl ArduinoService {
                 .arg(&config_file)
                 .current_dir(&dir);
         }
+        // arduino-cli exits when its stdin closes. We hold the write end for as long as we live, so
+        // the daemon also goes when this process is killed outright and `kill_on_drop` never runs.
         let mut child = command
+            .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| Error::Arduino(format!("spawn {}: {e}", cli_path.display())))?;
 
+        let stdin = child.stdin.take();
         forward_daemon_output(&mut child);
 
         let channel = connect_with_retry(port).await?;
@@ -84,6 +87,7 @@ impl ArduinoService {
 
         Ok(Self {
             _child: child,
+            _stdin: stdin,
             channel,
             instance,
             install_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
